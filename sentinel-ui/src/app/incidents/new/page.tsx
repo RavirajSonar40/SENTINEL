@@ -7,13 +7,7 @@ import TopBar from "@/components/TopBar";
 import { useAuth } from "@/lib/AuthContext";
 import { listRepositories, createIncident, Repository } from "@/lib/api";
 
-const services = [
-  { value: "payment-api", label: "payment-api" },
-  { value: "auth-api", label: "auth-api" },
-  { value: "core-api-gateway", label: "core-api-gateway" },
-  { value: "billing-api", label: "billing-api" },
-  { value: "fraud-service", label: "fraud-service" },
-];
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 const sources = [
   { value: "manual", label: "Manual" },
@@ -35,6 +29,7 @@ export default function NewIncident() {
   const { token } = useAuth();
   const router = useRouter();
   const [repos, setRepos] = useState<Repository[]>([]);
+  const [services, setServices] = useState<{value: string; label: string}[]>([]);
   const [title, setTitle] = useState("");
   const [errorLog, setErrorLog] = useState("");
   const [service, setService] = useState("");
@@ -50,6 +45,18 @@ export default function NewIncident() {
   useEffect(() => {
     if (!token) return;
     listRepositories(token).then(setRepos).catch(console.error);
+    fetch(`${API_BASE}/services/health`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const svcs = (data.services || []).map((s: { service_name: string }) => ({
+          value: s.service_name,
+          label: s.service_name,
+        }));
+        setServices(svcs);
+      })
+      .catch(() => {});
   }, [token]);
 
   const toggleRepo = (id: string) => {
@@ -118,7 +125,7 @@ export default function NewIncident() {
                     value={errorLog}
                     onChange={(e) => setErrorLog(e.target.value)}
                     className="w-full px-4 py-3 font-mono text-[13px] text-on-surface resize-y bg-surface-container border border-outline-variant rounded-md focus:border-primary focus:outline-none"
-                    placeholder={`2024-05-24T14:32:11.123Z  ERROR  [payment-api]\norg.postgresql.util.PSqLException: FATAL: remaining connection slots are reserved\nfor non-replication superuser connections\n    at org.postgresql.core.v3.ConnectionFactoryImpl.openConnectionFactoryImpl(ConnectionFactoryImpl.java:303)\n    ... 47 more`}
+                    placeholder={"Paste error logs, stack traces, or alert messages here...\n\nExample:\n2026-08-25T10:30:00.000Z  ERROR  [service-name]\nConnection refused\n    at ..."}
                     rows={10}
                     required
                   />

@@ -35,7 +35,6 @@ const sourceIcons: Record<string, string> = {
   deployment_regression: "update",
 };
 
-const services = ["All Services", "payment-api", "auth-api", "core-api-gateway", "billing-api", "fraud-service"];
 const severities = ["All Severities", "SEV-1", "SEV-2", "SEV-3", "SEV-4"];
 const statuses = ["All Statuses", "created", "investigating", "root_cause_identified", "fix_generated", "awaiting_approval", "resolved", "insufficient_evidence"];
 const sources = ["All Sources", "manual", "alert", "prometheus", "sentry", "webhook", "deployment_regression"];
@@ -52,6 +51,7 @@ function timeAgo(dateStr: string) {
 export default function IncidentsPage() {
   const { token } = useAuth();
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [serviceList, setServiceList] = useState<string[]>(["All Services"]);
   const [loading, setLoading] = useState(true);
   const [filterSeverity, setFilterSeverity] = useState("All Severities");
   const [filterStatus, setFilterStatus] = useState("All Statuses");
@@ -66,6 +66,15 @@ export default function IncidentsPage() {
       .then(setIncidents)
       .catch(console.error)
       .finally(() => setLoading(false));
+    fetch(`${(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "")}/services/health`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const names = (data.services || []).map((s: { service_name: string }) => s.service_name);
+        if (names.length > 0) setServiceList(["All Services", ...names]);
+      })
+      .catch(() => {});
   }, [token]);
 
   const filtered = incidents.filter((i) => {
@@ -111,7 +120,7 @@ export default function IncidentsPage() {
             <SelectFilter label="Severity" options={severities} value={filterSeverity} onChange={setFilterSeverity} />
             <SelectFilter label="Status" options={statuses} value={filterStatus} onChange={setFilterStatus} />
             <SelectFilter label="Source" options={sources} value={filterSource} onChange={setFilterSource} />
-            <SelectFilter label="Service" options={services} value={filterService} onChange={setFilterService} />
+            <SelectFilter label="Service" options={serviceList} value={filterService} onChange={setFilterService} />
             <button
               onClick={() => { setFilterSeverity("All Severities"); setFilterStatus("All Statuses"); setFilterSource("All Sources"); setFilterService("All Services"); }}
               className="text-[11px] text-on-surface-variant hover:text-primary transition-colors ml-2"

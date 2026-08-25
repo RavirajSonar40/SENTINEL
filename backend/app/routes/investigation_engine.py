@@ -120,6 +120,7 @@ async def trigger_investigation(
     for h in hypotheses[:10]:
         hyp_model = HypothesisModel(
             investigation_id=investigation.id,
+            incident_id=incident.id,
             label=h.label,
             description=h.description,
             confidence=h.confidence,

@@ -100,9 +100,9 @@ export default function RepositoriesPage() {
                         <span className="material-symbols-outlined text-[20px] text-on-surface-variant">folder</span>
                       </td>
                       <td className="py-3 px-4">
-                        <Link href={`/repositories/${repo.id}`} className="text-primary hover:underline font-medium">
+                        <a href={repo.github_url || "#"} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-medium">
                           {repo.name}
-                        </Link>
+                        </a>
                         <div className="text-[10px] text-on-surface-variant">{repo.full_name}</div>
                       </td>
                       <td className="py-3 px-4">

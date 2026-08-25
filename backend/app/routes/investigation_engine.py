@@ -181,7 +181,7 @@ async def trigger_investigation(
     if root_cause_found:
         incident.status = IncidentStatus.ROOT_CAUSE_IDENTIFIED.value
     else:
-        incident.status = IncidentStatus.EVIDENCE_COLLECTED.value
+        incident.status = IncidentStatus.ROOT_CAUSE_ANALYSIS.value
 
     db.commit()
 

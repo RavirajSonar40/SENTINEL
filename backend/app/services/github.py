@@ -1,6 +1,6 @@
 """GitHub API client using httpx."""
 import os
-from typing import Optional
+from typing import Dict, List, Optional
 import httpx
 
 GITHUB_API = "https://api.github.com"

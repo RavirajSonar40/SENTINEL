@@ -55,16 +55,15 @@ def process_approval(
     approval = Approval(
         fix_id=fix_id,
         user_id=user.id,
+        incident_id=fix.incident_id,
         status=approval_status,
-        comment=comment,
+        notes=comment or "",
     )
     db.add(approval)
 
     # Update fix status
     if action == "approve":
         fix.status = FixStatus.APPROVED.value
-        fix.approved_by = user.username
-        fix.approved_at = datetime.now(timezone.utc)
     elif action == "reject":
         fix.status = FixStatus.REJECTED.value
     elif action == "request_changes":
@@ -72,11 +71,11 @@ def process_approval(
 
     # Audit event
     audit = AuditEvent(
-        action=f"fix.{action}",
-        entity_type="proposed_fix",
-        entity_id=fix_id,
+        event_type=f"fix.{action}",
+        description=f"Fix {action}: {fix.title}",
         user_id=user.id,
-        details={"comment": comment, "fix_title": fix.title},
+        incident_id=fix.incident_id,
+        metadata_json={"comment": comment, "fix_id": fix_id},
     )
     db.add(audit)
     db.commit()
@@ -169,15 +168,15 @@ async def get_approval_history(
     """Get approval history for a fix."""
     approvals = db.query(Approval).filter(
         Approval.fix_id == fix_id
-    ).order_by(Approval.created_at.desc()).all()
+    ).order_by(Approval.requested_at.desc()).all()
 
     return [
         {
             "id": a.id,
             "user_id": a.user_id,
             "status": a.status,
-            "comment": a.comment,
-            "created_at": a.created_at.isoformat() if a.created_at else None,
+            "comment": a.notes,
+            "created_at": a.requested_at.isoformat() if a.requested_at else None,
         }
         for a in approvals
     ]

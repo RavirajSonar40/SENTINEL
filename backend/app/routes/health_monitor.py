@@ -93,8 +93,12 @@ def correlate_with_deployments(incident: Incident, db: Session) -> Dict:
         return {"deployments": [], "correlation": "no_timestamp"}
 
     lookback = incident.detected_at - timedelta(hours=24)
+    from app.models.incident import Service
+    service = db.query(Service).filter(Service.name == incident.service_name).first()
+    if not service:
+        return {"deployments": [], "correlation": "service_not_found"}
     recent_deployments = db.query(Deployment).filter(
-        Deployment.service_name == incident.service_name,
+        Deployment.service_id == service.id,
         Deployment.deployed_at >= lookback,
         Deployment.deployed_at <= incident.detected_at,
     ).order_by(desc(Deployment.deployed_at)).all()
@@ -187,8 +191,11 @@ async def record_deployment(
     db: Session = Depends(get_db),
 ):
     """Record a deployment event for correlation."""
+    from app.models.incident import Service
+    service = db.query(Service).filter(Service.name == service_name).first()
+    service_id = service.id if service else None
     deployment = Deployment(
-        service_name=service_name,
+        service_id=service_id,
         version=version,
         commit_sha=commit_sha,
         deployed_by=deployed_by,

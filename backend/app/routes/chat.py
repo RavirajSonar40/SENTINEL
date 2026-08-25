@@ -41,8 +41,8 @@ def build_context(db: Session, user_id) -> str:
             inc = db.query(Investigation).filter(Investigation.id == inv.id).first()
             parts.append(
                 f"Investigation {str(inv.id)[:8]}: status={inv.status}, "
-                f"root_cause={inv.root_cause_analysis[:200] if inv.root_cause_analysis else 'N/A'}, "
-                f"confidence={inv.confidence_score}"
+                f"root_cause_found={inv.root_cause_found}, "
+                f"confidence={inv.confidence}"
             )
 
     fixes = db.query(ProposedFix).all()

@@ -253,9 +253,9 @@ def create_incident_from_alert(
         signal = IncidentSignal(
             incident_id=existing.id,
             source=alert.source,
-            source_id=alert.external_id or "",
-            title=alert.title,
-            raw_payload=alert.metadata,
+            signal_type="alert",
+            content=alert.title or "",
+            fingerprint=alert.external_id or "",
         )
         db.add(signal)
         db.commit()
@@ -304,9 +304,9 @@ def create_incident_from_alert(
     signal = IncidentSignal(
         incident_id=incident.id,
         source=alert.source,
-        source_id=alert.external_id or "",
-        title=alert.title,
-        raw_payload=alert.metadata,
+        signal_type="alert",
+        content=alert.title or "",
+        fingerprint=alert.external_id or "",
     )
     db.add(signal)
     db.commit()

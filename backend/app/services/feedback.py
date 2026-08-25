@@ -60,7 +60,7 @@ def record_approval_feedback(
         user_id=user_id,
         event_type=f"feedback.{action}",
         description=f"Human {action}d fix: {fix.title}",
-        metadata={
+        metadata_json={
             "fix_id": fix_id,
             "action": action,
             "comment": comment,
@@ -85,7 +85,7 @@ def record_approval_feedback(
     from app.models.incident import RootCause
     rc = db.query(RootCause).filter(RootCause.investigation_id == fix.investigation_id).first()
     if rc:
-        outcome["root_cause_category"] = rc.category
+        outcome["root_cause_category"] = rc.affected_component
 
     db.commit()
 

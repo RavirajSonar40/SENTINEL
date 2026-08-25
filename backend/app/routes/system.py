@@ -28,7 +28,7 @@ def list_audit_logs(
             "entity_type": "incident",
             "entity_id": str(log.incident_id) if log.incident_id else "",
             "user_id": str(log.user_id) if log.user_id else "",
-            "details": log.metadata or {},
+            "details": log.metadata_json or {},
             "created_at": log.timestamp.isoformat() if log.timestamp else None,
         }
         for log in logs

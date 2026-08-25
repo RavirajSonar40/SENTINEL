@@ -83,8 +83,8 @@ def generate_fix_content(fix: ProposedFix, root_cause: Optional[RootCause]) -> D
             "title": f"{template['pr_title_prefix']} rollback to previous version",
             "body": f"""## Rollback Proposal
 
-**Incident:** {root_cause.title if root_cause else 'Unknown'}
-**Root Cause:** {root_cause.description if root_cause else 'N/A'}
+**Incident:** {root_cause.summary if root_cause else 'Unknown'}
+**Root Cause:** {root_cause.causal_explanation if root_cause else 'N/A'}
 
 ### Rollback Instructions
 1. Revert the deployment to the previous stable version
@@ -152,7 +152,6 @@ def generate_fix_content(fix: ProposedFix, root_cause: Optional[RootCause]) -> D
 
 **Issue:** {fix.title}
 **Description:** {fix.description}
-**Approach:** {fix.approach}
 
 ### Changes
 {chr(10).join(f'- {fp}' for fp in (fix.files_to_modify or []))}
@@ -162,7 +161,7 @@ def generate_fix_content(fix: ProposedFix, root_cause: Optional[RootCause]) -> D
 - [ ] No regressions
 - [ ] Manual verification
 """,
-            "files": [{"path": fp, "change": "Modify"} for fp in (fix.files_to_modify or [])],
+            "files": [],
         }
 
 
@@ -186,9 +185,8 @@ async def list_fixes(
             "fix_type": f.fix_type,
             "title": f.title,
             "description": f.description,
-            "approach": f.approach,
             "status": f.status,
-            "created_at": f.created_at.isoformat() if f.created_at else None,
+            "created_at": f.generated_at.isoformat() if f.generated_at else None,
         }
         for f in fixes
     ]

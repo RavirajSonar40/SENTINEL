@@ -70,7 +70,6 @@ async def trigger_investigation(
         db.flush()
 
         # Link to incident
-        incident.investigation_id = investigation.id
         incident.status = IncidentStatus.INVESTIGATING.value
 
     # Build state — resolve repository from scopes if not provided
@@ -105,7 +104,7 @@ async def trigger_investigation(
             repository=ev_data.get("file", "").split("/")[0] if ev_data.get("file") else None,
             file_path=ev_data.get("file"),
             source_id=ev_data.get("symbol"),
-            confidence=ev_data.get("score", 0.5),
+            relevance_score=ev_data.get("score", 0.5),
         )
         db.add(evidence)
         evidence_count += 1
@@ -139,12 +138,11 @@ async def trigger_investigation(
         root_cause_found = True
         rc = RootCause(
             investigation_id=investigation.id,
-            hypothesis_id=None,  # Could link to hypothesis
-            category=root_cause.get("category"),
-            severity=IncidentSeverity.SEV1.value if root_cause.get("severity") == "high" else IncidentSeverity.SEV2.value,
+            incident_id=incident.id,
+            summary=root_cause.get("label", "Root Cause"),
+            causal_explanation=root_cause.get("description", ""),
             confidence=root_cause.get("confidence", "medium"),
-            title=root_cause.get("label", "Root Cause"),
-            description=root_cause.get("description", ""),
+            affected_component=root_cause.get("category", "unknown"),
         )
         db.add(rc)
 
@@ -154,10 +152,10 @@ async def trigger_investigation(
             fix_model = ProposedFix(
                 investigation_id=investigation.id,
                 root_cause_id=rc.id,
+                incident_id=incident.id,
                 fix_type=fix.get("type"),
                 title=fix.get("title", "Proposed Fix"),
                 description=fix.get("description", ""),
-                approach=fix.get("approach", "manual"),
             )
             db.add(fix_model)
             db.flush()
@@ -173,8 +171,6 @@ async def trigger_investigation(
     # Update investigation
     investigation.status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
     investigation.confidence = state.confidence
-    investigation.tasks_completed = state.tasks_completed
-    investigation.tasks_failed = state.tasks_failed
     investigation.completed_at = datetime.now(timezone.utc)
 
     # Update incident

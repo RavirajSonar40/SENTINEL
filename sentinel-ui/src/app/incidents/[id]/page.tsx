@@ -352,7 +352,7 @@ export default function InvestigationDetail() {
                           event.color === "error" ? "bg-error text-on-error" :
                           "bg-surface-container-highest text-on-surface-variant"
                         }`}>
-                          <span className="material-symbols-rounded text-[14px]">{event.icon}</span>
+                          <span className="material-symbols-outlined text-[14px]">{event.icon}</span>
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">

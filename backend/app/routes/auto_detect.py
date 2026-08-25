@@ -203,9 +203,9 @@ def auto_create_incident(
         signal = IncidentSignal(
             incident_id=incident.id,
             source="auto_detection",
-            source_id=rule["rule"],
-            title=rule["message"],
-            raw_payload=rule,
+            signal_type="rule",
+            content=rule["message"],
+            fingerprint=rule["rule"],
         )
         db.add(signal)
 

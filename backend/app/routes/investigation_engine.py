@@ -189,7 +189,7 @@ async def trigger_investigation(
 
     return InvestigateResponse(
         status="completed",
-        investigation_id=investigation.id,
+        investigation_id=str(investigation.id),
         tasks_completed=state.tasks_completed,
         tasks_failed=state.tasks_failed,
         evidence_count=evidence_count,

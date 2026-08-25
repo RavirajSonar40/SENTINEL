@@ -126,20 +126,24 @@ export default function InvestigationDetail() {
       async (data) => {
         setEngineResult(data);
         setStreamingActive(false);
-        // Refresh all data
-        const inc = await getIncident(token, incident.id);
-        setIncident(inc);
-        if (inc.investigation) {
-          const inv = await getInvestigation(token, inc.investigation.id);
-          setInvestigation(inv);
-          const ev = await listEvidence(token, inc.investigation.id).catch(() => []);
-          setEvidence(ev);
-          const hyp = await listHypotheses(token, inc.investigation.id).catch(() => []);
-          setHypotheses(hyp);
-          const rc = await getRootCause(token, inc.investigation.id).catch(() => null);
-          setRootCause(rc);
-          const fx = await listFixes(token, inc.investigation.id).catch(() => []);
-          setFixes(fx);
+        try {
+          // Refresh all data
+          const inc = await getIncident(token, incident.id);
+          setIncident(inc);
+          if (inc.investigation) {
+            const inv = await getInvestigation(token, inc.investigation.id).catch(() => null);
+            if (inv) setInvestigation(inv);
+            const ev = await listEvidence(token, inc.investigation.id).catch(() => []);
+            setEvidence(ev);
+            const hyp = await listHypotheses(token, inc.investigation.id).catch(() => []);
+            setHypotheses(hyp);
+            const rc = await getRootCause(token, inc.investigation.id).catch(() => null);
+            setRootCause(rc);
+            const fx = await listFixes(token, inc.investigation.id).catch(() => []);
+            setFixes(fx);
+          }
+        } catch (e) {
+          console.error("Failed to refresh data after investigation:", e);
         }
         setInvestigating(false);
       },

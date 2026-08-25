@@ -291,33 +291,45 @@ export function triggerInvestigationStream(
     body: JSON.stringify({ incident_id: incidentId, repository, service }),
   }).then(async (response) => {
     if (!response.ok) {
-      onError(`HTTP ${response.status}`);
+      const text = await response.text().catch(() => "");
+      onError(`HTTP ${response.status}: ${text.slice(0, 200)}`);
       return;
     }
     const reader = response.body?.getReader();
     if (!reader) { onError("No response body"); return; }
     const decoder = new TextDecoder();
     let buffer = "";
+    let gotComplete = false;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      let eventType = "";
-      for (const line of lines) {
-        if (line.startsWith("event: ")) eventType = line.slice(7).trim();
-        else if (line.startsWith("data: ")) {
-          const dataStr = line.slice(6);
-          try {
-            const data = JSON.parse(dataStr);
-            if (eventType === "step") onStep(data as InvestigationStep);
-            else if (eventType === "complete") onComplete(data);
-            else if (eventType === "error") onError(data.message || "Unknown error");
-          } catch {}
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        let eventType = "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+          else if (line.startsWith("data: ")) {
+            const dataStr = line.slice(6);
+            try {
+              const data = JSON.parse(dataStr);
+              if (eventType === "step") onStep(data as InvestigationStep);
+              else if (eventType === "complete") { gotComplete = true; onComplete(data); }
+              else if (eventType === "error") onError(data.message || "Unknown error");
+            } catch {}
+          }
         }
       }
+    } catch (e) {
+      onError("Stream interrupted: " + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+
+    // If stream ended without a complete event, something went wrong
+    if (!gotComplete) {
+      onError("Investigation stream ended unexpectedly");
     }
   }).catch((e) => onError(e.message || "Network error"));
 

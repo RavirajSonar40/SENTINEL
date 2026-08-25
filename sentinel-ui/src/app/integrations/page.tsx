@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import TopBar from "@/components/TopBar";
@@ -46,7 +46,7 @@ const integrations = [
   },
 ];
 
-export default function IntegrationsPage() {
+function IntegrationsContent() {
   const { token } = useAuth();
   const searchParams = useSearchParams();
   const justConnected = searchParams.get("connected") === "github";
@@ -173,5 +173,13 @@ export default function IntegrationsPage() {
         </div>
       </main>
     </>
+  );
+}
+
+export default function IntegrationsPage() {
+  return (
+    <Suspense fallback={<div className="flex-1 p-6"><div className="text-on-surface-variant text-[13px]">Loading...</div></div>}>
+      <IntegrationsContent />
+    </Suspense>
   );
 }

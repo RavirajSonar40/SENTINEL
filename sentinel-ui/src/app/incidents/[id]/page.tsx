@@ -10,6 +10,7 @@ import {
   Incident, Investigation, Evidence, Hypothesis,
   listRepositories, Repository,
   triggerInvestigation, getEngineStatus,
+  triggerInvestigationStream, InvestigationStep,
   getRootCause, listFixes, RootCause, ProposedFix,
   getInvestigationTimeline, TimelineEvent,
   getRepoCommits, getRepoPRs, getRepoBranches,
@@ -73,6 +74,9 @@ export default function InvestigationDetail() {
   const [githubData, setGithubData] = useState<{commits: any[]; prs: any[]; branches: any[]}>({commits: [], prs: [], branches: []});
   const [githubLoading, setGithubLoading] = useState<string | null>(null);
   const [selectedRepo, setSelectedRepo] = useState<string>("");
+  const [streamSteps, setStreamSteps] = useState<InvestigationStep[]>([]);
+  const [streamingActive, setStreamingActive] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   const handleFetchGithub = async (type: "commits" | "prs" | "branches") => {
     if (!token || !repos.length) return;
@@ -101,26 +105,51 @@ export default function InvestigationDetail() {
     if (!token || !incident) return;
     setInvestigating(true);
     setEngineResult(null);
-    try {
-      const result = await triggerInvestigation(token, incident.id, selectedRepo || undefined);
-      setEngineResult(result);
-      // Refresh data
-      const inc = await getIncident(token, incident.id);
-      setIncident(inc);
-      if (inc.investigation) {
-        const inv = await getInvestigation(token, inc.investigation.id);
-        setInvestigation(inv);
-        const ev = await listEvidence(token, inc.investigation.id).catch(() => []);
-        setEvidence(ev);
-        const hyp = await listHypotheses(token, inc.investigation.id).catch(() => []);
-        setHypotheses(hyp);
-      }
-    } catch (err) {
-      console.error("Investigation failed:", err);
-      setEngineResult({ status: "failed", message: String(err) });
-    } finally {
-      setInvestigating(false);
-    }
+    setStreamSteps([]);
+    setStreamError(null);
+    setStreamingActive(true);
+
+    triggerInvestigationStream(
+      token,
+      incident.id,
+      (step) => {
+        setStreamSteps((prev) => {
+          const existing = prev.findIndex((s) => s.step === step.step);
+          if (existing >= 0) {
+            const next = [...prev];
+            next[existing] = step;
+            return next;
+          }
+          return [...prev, step];
+        });
+      },
+      async (data) => {
+        setEngineResult(data);
+        setStreamingActive(false);
+        // Refresh all data
+        const inc = await getIncident(token, incident.id);
+        setIncident(inc);
+        if (inc.investigation) {
+          const inv = await getInvestigation(token, inc.investigation.id);
+          setInvestigation(inv);
+          const ev = await listEvidence(token, inc.investigation.id).catch(() => []);
+          setEvidence(ev);
+          const hyp = await listHypotheses(token, inc.investigation.id).catch(() => []);
+          setHypotheses(hyp);
+          const rc = await getRootCause(token, inc.investigation.id).catch(() => null);
+          setRootCause(rc);
+          const fx = await listFixes(token, inc.investigation.id).catch(() => []);
+          setFixes(fx);
+        }
+        setInvestigating(false);
+      },
+      (errMsg) => {
+        setStreamError(errMsg);
+        setStreamingActive(false);
+        setInvestigating(false);
+      },
+      selectedRepo || undefined,
+    );
   };
 
   useEffect(() => {
@@ -697,25 +726,87 @@ export default function InvestigationDetail() {
               </div>
             )}
 
-            {/* Placeholder when no investigation data */}
+            {/* Investigation Status / Streaming Progress */}
             {!investigation && evidence.length === 0 && hypotheses.length === 0 && (
               <div className="bg-surface-container-low border border-surface-container-highest rounded p-4">
                 <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant mb-4">
                   Investigation Status
                 </h2>
-                <div className="flex items-center gap-2 text-on-surface text-[12px]">
-                  <span className="w-2 h-2 rounded-full bg-tertiary" />
-                  {incident.status === "created" && "Awaiting investigation start"}
-                  {incident.status === "investigating" && "Investigation in progress..."}
-                  {incident.status === "resolved" && "Investigation complete"}
-                </div>
-                <p className="text-[12px] text-on-surface-variant mt-4">
-                  Investigation details, hypotheses, evidence, and proposed fixes will appear here once the investigation engine is active.
-                </p>
-                {incident.status === "created" && (
+
+                {/* Streaming progress panel */}
+                {streamingActive && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-primary text-[13px] font-medium">
+                      <span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span>
+                      Investigating...
+                    </div>
+                    <div className="space-y-1">
+                      {streamSteps.map((s, i) => (
+                        <div key={`${s.step}-${i}`} className="flex items-start gap-3 py-1.5">
+                          <div className="mt-0.5">
+                            {s.status === "completed" ? (
+                              <span className="material-symbols-outlined text-[14px] text-green-400">check_circle</span>
+                            ) : (
+                              <span className="material-symbols-outlined animate-spin text-[14px] text-primary">progress_activity</span>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[12px] text-on-surface">{s.message}</div>
+                            {s.detail && (
+                              <div className="text-[11px] text-on-surface-variant mt-0.5 font-mono">
+                                {typeof s.detail === "string" ? s.detail : Array.isArray(s.detail) ? (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {s.detail.map((d: string, j: number) => (
+                                      <span key={j} className="px-1.5 py-0.5 bg-surface-container-high rounded text-[10px]">{d}</span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <pre className="whitespace-pre-wrap text-[10px]">{JSON.stringify(s.detail, null, 2)}</pre>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Error display */}
+                {streamError && (
+                  <div className="mt-3 p-3 bg-error/10 border border-error/20 rounded text-[12px] text-error">
+                    {streamError}
+                  </div>
+                )}
+
+                {/* Complete display */}
+                {engineResult && !streamingActive && (
+                  <div className="mt-3 p-3 bg-green-500/10 border border-green-500/20 rounded text-[12px] text-green-400">
+                    Investigation complete — {engineResult.evidence_count} evidence items, {engineResult.hypotheses_count} hypotheses
+                    {engineResult.root_cause_found ? " (root cause found)" : " (no definitive root cause)"}
+                  </div>
+                )}
+
+                {/* Idle state */}
+                {!streamingActive && !engineResult && (
+                  <>
+                    <div className="flex items-center gap-2 text-on-surface text-[12px]">
+                      <span className="w-2 h-2 rounded-full bg-tertiary" />
+                      {incident.status === "created" && "Awaiting investigation start"}
+                      {incident.status === "investigating" && "Investigation in progress..."}
+                      {incident.status === "resolved" && "Investigation complete"}
+                    </div>
+                    <p className="text-[12px] text-on-surface-variant mt-4">
+                      Click below to start the AI investigation. You will see real-time progress as Sentinel analyzes your codebase.
+                    </p>
+                  </>
+                )}
+
+                {incident.status === "created" && !streamingActive && (
                   <button
                     onClick={handleRunInvestigation}
-                    className="mt-4 px-4 py-2 bg-primary-container text-on-primary-container text-[12px] font-semibold uppercase tracking-wider rounded-md border border-primary hover:bg-primary hover:text-on-primary-fixed transition-colors flex items-center gap-2"
+                    disabled={investigating}
+                    className="mt-4 px-4 py-2 bg-primary-container text-on-primary-container text-[12px] font-semibold uppercase tracking-wider rounded-md border border-primary hover:bg-primary hover:text-on-primary-fixed transition-colors flex items-center gap-2 disabled:opacity-50"
                   >
                     <span className="material-symbols-outlined text-[16px]">play_arrow</span>
                     Start Investigation

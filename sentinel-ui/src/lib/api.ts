@@ -266,6 +266,65 @@ export async function triggerInvestigation(
   });
 }
 
+export interface InvestigationStep {
+  step: string;
+  status: "active" | "completed";
+  message: string;
+  detail: string | string[] | Record<string, unknown>;
+}
+
+export function triggerInvestigationStream(
+  token: string,
+  incidentId: string,
+  onStep: (step: InvestigationStep) => void,
+  onComplete: (data: Record<string, unknown>) => void,
+  onError: (msg: string) => void,
+  repository?: string,
+  service?: string,
+): EventSource {
+  const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+
+  // POST via fetch, then read the stream with EventSource-like handling
+  fetch(`${API_BASE}/investigate/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ incident_id: incidentId, repository, service }),
+  }).then(async (response) => {
+    if (!response.ok) {
+      onError(`HTTP ${response.status}`);
+      return;
+    }
+    const reader = response.body?.getReader();
+    if (!reader) { onError("No response body"); return; }
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      let eventType = "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+        else if (line.startsWith("data: ")) {
+          const dataStr = line.slice(6);
+          try {
+            const data = JSON.parse(dataStr);
+            if (eventType === "step") onStep(data as InvestigationStep);
+            else if (eventType === "complete") onComplete(data);
+            else if (eventType === "error") onError(data.message || "Unknown error");
+          } catch {}
+        }
+      }
+    }
+  }).catch((e) => onError(e.message || "Network error"));
+
+  // Return a dummy EventSource for compatibility (actual reading is via fetch)
+  return new EventSource("data:text/event-stream,");
+}
+
 export async function getEngineStatus(token: string, investigationId: string) {
   return request(`/investigations/${investigationId}/engine-status`, { token });
 }

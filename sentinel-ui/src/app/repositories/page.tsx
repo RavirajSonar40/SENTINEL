@@ -23,6 +23,7 @@ export default function RepositoriesPage() {
   const [search, setSearch] = useState("");
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [syncAllLoading, setSyncAllLoading] = useState(false);
+  const [syncError, setSyncError] = useState("");
 
   useEffect(() => {
     if (!token) return;
@@ -35,6 +36,7 @@ export default function RepositoriesPage() {
   const handleSync = async (repoId: string) => {
     if (!token || syncingId) return;
     setSyncingId(repoId);
+    setSyncError("");
     try {
       const res = await fetch(`${API_BASE}/github/sync-token`, {
         method: "POST",
@@ -43,9 +45,12 @@ export default function RepositoriesPage() {
       if (res.ok) {
         const updated = await listRepositories(token);
         setRepos(updated);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setSyncError(data.detail || "Sync failed");
       }
     } catch (e) {
-      console.error("Sync failed:", e);
+      setSyncError("Network error - is the backend running?");
     } finally {
       setSyncingId(null);
     }
@@ -54,6 +59,7 @@ export default function RepositoriesPage() {
   const handleSyncAll = async () => {
     if (!token || syncAllLoading) return;
     setSyncAllLoading(true);
+    setSyncError("");
     try {
       const res = await fetch(`${API_BASE}/github/sync-token`, {
         method: "POST",
@@ -62,9 +68,12 @@ export default function RepositoriesPage() {
       if (res.ok) {
         const updated = await listRepositories(token);
         setRepos(updated);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setSyncError(data.detail || "Sync failed");
       }
     } catch (e) {
-      console.error("Sync all failed:", e);
+      setSyncError("Network error - is the backend running?");
     } finally {
       setSyncAllLoading(false);
     }
@@ -115,6 +124,11 @@ export default function RepositoriesPage() {
                 className="w-full px-10 py-2 pr-4 font-mono text-[12px] text-on-surface bg-surface-container-high border border-outline-variant rounded-md focus:border-primary focus:outline-none"
               />
             </div>
+            {syncError && (
+              <div className="text-[12px] text-error bg-error/10 border border-error/20 rounded px-3 py-1.5">
+                {syncError}
+              </div>
+            )}
           </div>
 
           {loading ? (
@@ -158,13 +172,13 @@ export default function RepositoriesPage() {
                         <div className="text-[10px] text-on-surface-variant">{repo.full_name}</div>
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold border ${syncStatusStyles.not_connected}`}>
-                          Not Connected
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold border ${syncStatusStyles[repo.sync_status] || syncStatusStyles.not_connected}`}>
+                          {repo.sync_status === "synced" ? "Synced" : repo.sync_status === "running" ? "Syncing..." : repo.sync_status === "failed" ? "Failed" : "Not Connected"}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-on-surface-variant">{repo.default_branch}</td>
                       <td className="py-3 px-4 text-on-surface-variant">{repo.service_id ? "Linked" : "—"}</td>
-                      <td className="py-3 px-4 text-on-surface-variant">Never</td>
+                      <td className="py-3 px-4 text-on-surface-variant">{repo.last_synced_at ? new Date(repo.last_synced_at).toLocaleString() : "Never"}</td>
                       <td className="py-3 px-4 text-right">
                         <button
                           onClick={() => handleSync(repo.id)}

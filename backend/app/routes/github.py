@@ -96,11 +96,15 @@ async def connect_with_token(
                     default_branch=repo_data.get("default_branch", "main"),
                     github_url=repo_data.get("html_url"),
                     installation_id=existing.id if existing else inst_record.id,
+                    sync_status="synced",
+                    last_synced_at=func.now(),
                 )
                 db.add(repo)
             else:
                 repo.default_branch = repo_data.get("default_branch", "main")
                 repo.github_url = repo_data.get("html_url")
+                repo.sync_status = "synced"
+                repo.last_synced_at = func.now()
             synced += 1
 
         db.commit()
@@ -137,11 +141,15 @@ async def sync_repos_token(
                     default_branch=repo_data.get("default_branch", "main"),
                     github_url=repo_data.get("html_url"),
                     installation_id=installation.id,
+                    sync_status="synced",
+                    last_synced_at=func.now(),
                 )
                 db.add(repo)
             else:
                 repo.default_branch = repo_data.get("default_branch", "main")
                 repo.github_url = repo_data.get("html_url")
+                repo.sync_status = "synced"
+                repo.last_synced_at = func.now()
             synced += 1
         db.commit()
         return {"synced": synced, "status": "completed"}

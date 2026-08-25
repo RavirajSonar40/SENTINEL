@@ -61,4 +61,12 @@ app.include_router(system_router)
 
 @app.on_event("startup")
 async def startup_event():
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE repositories ADD COLUMN IF NOT EXISTS sync_status VARCHAR(50) DEFAULT 'pending'"))
+            conn.execute(text("ALTER TABLE repositories ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP WITH TIME ZONE"))
+            conn.commit()
+        except Exception:
+            pass
     start_workers()

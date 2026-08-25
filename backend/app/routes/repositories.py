@@ -17,6 +17,8 @@ class RepositoryOut(BaseModel):
     default_branch: str
     service_id: str | None = None
     github_url: str | None = None
+    sync_status: str = "pending"
+    last_synced_at: str | None = None
 
 
 @router.get("", response_model=List[RepositoryOut])
@@ -33,6 +35,8 @@ def list_repositories(
             default_branch=r.default_branch,
             service_id=str(r.service_id) if r.service_id else None,
             github_url=r.github_url,
+            sync_status=r.sync_status or "pending",
+            last_synced_at=r.last_synced_at.isoformat() if r.last_synced_at else None,
         )
         for r in repos
     ]

@@ -198,6 +198,8 @@ class Repository(Base):
     installation_id = Column(UUID(as_uuid=True), ForeignKey("github_installations.id"), nullable=True)
     default_branch = Column(String(100), default="main")
     github_url = Column(String(500), nullable=True)
+    sync_status = Column(String(50), default="pending")
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True)
     metadata_json = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -65,6 +65,8 @@ export interface Repository {
   default_branch: string;
   service_id?: string;
   github_url?: string;
+  sync_status: string;
+  last_synced_at?: string;
 }
 
 export async function listRepositories(token: string): Promise<Repository[]> {

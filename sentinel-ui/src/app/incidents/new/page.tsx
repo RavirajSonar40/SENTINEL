@@ -175,7 +175,7 @@ export default function NewIncident() {
                 <div className="mt-3">
                   <label className="text-[12px] text-on-surface-variant mb-2 block">Severity</label>
                   <div className="grid grid-cols-4 gap-2">
-                    {SEVERITY_OPTIONS.map((opt) => (
+                    {severities.map((opt: { value: string; label: string; desc: string; color: string }) => (
                       <button
                         key={opt.value}
                         type="button"
@@ -197,7 +197,7 @@ export default function NewIncident() {
                     ))}
                   </div>
                   <p className="text-[11px] text-on-surface-variant mt-1">
-                    {SEVERITY_OPTIONS.find((o) => o.value === severity)?.desc}
+                    {severities.find((o: { value: string; desc: string }) => o.value === severity)?.desc}
                   </p>
                 </div>
               </div>

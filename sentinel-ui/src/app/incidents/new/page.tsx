@@ -172,6 +172,34 @@ export default function NewIncident() {
                     placeholder="e.g., Database connection pool exhausted causing request failures"
                   />
                 </div>
+                <div className="mt-3">
+                  <label className="text-[12px] text-on-surface-variant mb-2 block">Severity</label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {SEVERITY_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setSeverity(opt.value)}
+                        className={`px-3 py-2 rounded-md border text-[12px] font-medium transition-all ${
+                          severity === opt.value
+                            ? opt.color === "error"
+                              ? "bg-error-container text-error border-error"
+                              : opt.color === "tertiary"
+                              ? "bg-tertiary-container text-tertiary border-tertiary"
+                              : opt.color === "primary"
+                              ? "bg-primary-container text-primary border-primary"
+                              : "bg-secondary-container text-secondary border-secondary"
+                            : "bg-surface-container border-outline-variant text-on-surface-variant hover:border-outline"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant mt-1">
+                    {SEVERITY_OPTIONS.find((o) => o.value === severity)?.desc}
+                  </p>
+                </div>
               </div>
 
               {/* Step 2 - Additional Context */}

@@ -62,7 +62,7 @@ async def trigger_investigation(
     if not investigation:
         investigation = Investigation(
             incident_id=incident.id,
-            status=InvestigationStatus.INVESTIGATING.value,
+            status=InvestigationStatus.PLANNING.value,
             confidence="low",
             started_at=datetime.now(timezone.utc),
         )
@@ -171,7 +171,7 @@ async def trigger_investigation(
                 db.add(fix_file)
 
     # Update investigation
-    investigation.status = InvestigationStatus.ROOT_CAUSE_IDENTIFIED.value if root_cause_found else InvestigationStatus.EVIDENCE_COLLECTED.value
+    investigation.status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
     investigation.confidence = state.confidence
     investigation.tasks_completed = state.tasks_completed
     investigation.tasks_failed = state.tasks_failed

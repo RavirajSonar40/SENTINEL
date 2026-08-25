@@ -63,6 +63,7 @@ export interface Repository {
   full_name: string;
   default_branch: string;
   service_id?: string;
+  github_url?: string;
 }
 
 export async function listRepositories(token: string): Promise<Repository[]> {

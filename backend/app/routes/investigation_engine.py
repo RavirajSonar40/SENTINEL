@@ -98,6 +98,7 @@ async def trigger_investigation(
     for ev_data in state.evidence_collected[:20]:
         evidence = Evidence(
             investigation_id=investigation.id,
+            incident_id=incident.id,
             source_type=EvidenceSourceType.COMMIT.value if "code" in ev_data.get("source", "") else EvidenceSourceType.FILE.value,
             title=f"{ev_data.get('symbol', ev_data.get('file', 'Unknown'))}",
             summary=ev_data.get("content_preview", "")[:500],

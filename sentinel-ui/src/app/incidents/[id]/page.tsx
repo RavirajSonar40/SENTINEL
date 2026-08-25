@@ -164,7 +164,7 @@ export default function InvestigationDetail() {
       .then((inc) => {
         setIncident(inc);
         if (inc.investigation) {
-          getInvestigation(token, inc.investigation.id).then(setInvestigation);
+          getInvestigation(token, inc.investigation.id).then(setInvestigation).catch(() => {});
           listEvidence(token, inc.investigation.id).then(setEvidence).catch(() => {});
           listHypotheses(token, inc.investigation.id).then(setHypotheses).catch(() => {});
           getRootCause(token, inc.investigation.id).then(setRootCause).catch(() => {});
@@ -417,10 +417,10 @@ export default function InvestigationDetail() {
                       Model: {investigation.llm_model || "—"}
                     </span>
                     <span className="text-on-surface-variant">
-                      Tokens: {investigation.total_tokens.toLocaleString()}
+                      Tokens: {(investigation.total_tokens ?? 0).toLocaleString()}
                     </span>
                     <span className="text-on-surface-variant">
-                      Cost: ${investigation.total_cost_usd.toFixed(4)}
+                      Cost: ${(investigation.total_cost_usd ?? 0).toFixed(4)}
                     </span>
                   </div>
                 </div>

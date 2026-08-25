@@ -158,6 +158,7 @@ async def trigger_investigation(
                 fix_type=fix.get("type"),
                 title=fix.get("title", "Proposed Fix"),
                 description=fix.get("description", ""),
+                proposed_change=fix.get("description", ""),
             )
             db.add(fix_model)
             db.flush()

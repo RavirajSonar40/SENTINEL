@@ -33,11 +33,14 @@ class LLMConfig:
     @classmethod
     def from_env(cls) -> "LLMConfig":
         provider = os.getenv("LLM_PROVIDER", "mock")
+        api_url = os.getenv("LLM_API_URL", "") or os.getenv("LLM_BASE_URL", "")
+        if not api_url and provider == "nvidia":
+            api_url = "https://integrate.api.nvidia.com/v1/chat/completions"
         return cls(
             provider=LLMProvider(provider),
             model=os.getenv("LLM_MODEL", ""),
             api_key=os.getenv("LLM_API_KEY", ""),
-            api_url=os.getenv("LLM_API_URL", ""),
+            api_url=api_url,
             temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
             max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
             timeout=float(os.getenv("LLM_TIMEOUT", "60")),

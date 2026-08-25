@@ -152,7 +152,7 @@ async def trigger_investigation(
         fixes = generate_proposed_fixes(root_cause, state)
         for fix in fixes[:3]:
             fix_model = ProposedFix(
-                investigation_id=investigation.id,
+        investigation_id=str(investigation.id),
                 root_cause_id=rc.id,
                 incident_id=incident.id,
                 fix_type=fix.get("type"),

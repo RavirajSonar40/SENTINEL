@@ -7,7 +7,7 @@ import TopBar from "@/components/TopBar";
 import { useAuth } from "@/lib/AuthContext";
 import { listRepositories, getGithubStatus, Repository } from "@/lib/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 const integrations = [
   {

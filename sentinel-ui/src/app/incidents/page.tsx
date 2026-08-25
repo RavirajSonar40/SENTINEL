@@ -204,9 +204,9 @@ export default function IncidentsPage() {
                       <td className="py-3 px-4 text-on-surface-variant">{timeAgo(inc.created_at)}</td>
                       <td className="py-3 px-4 text-on-surface-variant">{timeAgo(inc.updated_at || inc.created_at)}</td>
                       <td className="py-3 px-4 text-right">
-                        <button className="text-on-surface-variant hover:text-primary transition-colors">
+                        <a href={`/incidents/${inc.id}`} className="text-on-surface-variant hover:text-primary transition-colors">
                           <span className="material-symbols-outlined text-[16px]">more_horiz</span>
-                        </button>
+                        </a>
                       </td>
                     </tr>
                   ))}

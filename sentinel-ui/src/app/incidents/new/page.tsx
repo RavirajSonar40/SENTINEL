@@ -43,6 +43,7 @@ export default function NewIncident() {
   const [incidentTime, setIncidentTime] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [branch, setBranch] = useState("");
+  const [files, setFiles] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -74,9 +75,13 @@ export default function NewIncident() {
     setError("");
     setLoading(true);
     try {
+      const desc = errorLog
+        + (additionalContext ? "\n\nAdditional context: " + additionalContext : "")
+        + (branch ? "\n\nTarget branch: " + branch : "")
+        + (files ? "\n\nFocus files: " + files : "");
       const incident = await createIncident(token, {
         title,
-        description: errorLog + (additionalContext ? "\n\nAdditional context: " + additionalContext : ""),
+        description: desc,
         severity,
         service,
         source,
@@ -292,6 +297,8 @@ export default function NewIncident() {
                         <label className="text-[12px] text-on-surface-variant mb-1 block">Specific Files (optional)</label>
                         <input
                           type="text"
+                          value={files}
+                          onChange={(e) => setFiles(e.target.value)}
                           className="w-full px-3 py-2 font-mono text-[13px] text-on-surface bg-surface-container border border-outline-variant rounded-md focus:border-primary focus:outline-none"
                           placeholder="e.g., src/payment/charge.ts, auth/handler.go"
                         />

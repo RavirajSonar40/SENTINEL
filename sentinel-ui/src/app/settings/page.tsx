@@ -41,6 +41,7 @@ export default function SettingsPage() {
       />
       <main className="flex-1 p-6 pb-10">
         <div className="max-w-[900px] mx-auto space-y-4">
+          <form onSubmit={(e) => { e.preventDefault(); handleSave(); }} className="space-y-4">
           {/* LLM Configuration */}
           <div className="bg-surface-container-low border border-outline-variant rounded p-4">
             <h2 className="text-[13px] font-semibold text-on-surface mb-4">LLM Configuration</h2>
@@ -121,12 +122,13 @@ export default function SettingsPage() {
           {/* Save */}
           <div className="flex justify-end">
             <button
-              onClick={handleSave}
+              type="submit"
               className="px-6 py-2 bg-primary text-on-primary rounded text-[12px] font-medium hover:bg-primary/90 transition-colors"
             >
               {saved ? "Saved!" : "Save Settings"}
             </button>
           </div>
+          </form>
         </div>
       </main>
     </>

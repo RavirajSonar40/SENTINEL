@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import TopBar from "@/components/TopBar";
 
 export default function InvestigationInconclusive() {
@@ -29,12 +30,12 @@ export default function InvestigationInconclusive() {
             investigation scope, or mark this incident for manual review.
           </p>
           <div className="flex gap-3 justify-center">
-            <a
+            <Link
               href={`/incidents/${id}`}
               className="px-4 py-2 bg-surface-container border border-outline-variant text-on-surface rounded text-[12px] font-medium hover:bg-surface-container-high transition-colors"
             >
               Back to Incident
-            </a>
+            </Link>
           </div>
         </div>
       </main>

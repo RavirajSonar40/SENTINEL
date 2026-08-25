@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import { useAuth } from "@/lib/AuthContext";
 import {
@@ -601,7 +602,7 @@ export default function InvestigationDetail() {
                 </div>
                 <div className="mt-3 p-3 bg-surface-container-high border border-outline-variant rounded">
                   <p className="text-[11px] text-on-surface-variant">
-                    Connect GitHub in <a href="/integrations" className="text-primary hover:underline">Integrations</a> to enable automatic commit/PR fetching and webhook-based real-time sync.
+                    Connect GitHub in <Link href="/integrations" className="text-primary hover:underline">Integrations</Link> to enable automatic commit/PR fetching and webhook-based real-time sync.
                   </p>
                 </div>
               </div>

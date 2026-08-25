@@ -12,7 +12,9 @@ import httpx
 class LLMProvider(str, Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    NVIDIA = "nvidia"
     KIMI = "kimi"
+    VICTOE = "victoe"
     HUGGINGFACE = "huggingface"
     OLLAMA = "ollama"
     MOCK = "mock"
@@ -249,7 +251,9 @@ async def _call_mock(config: LLMConfig, messages: List[LLMMessage]) -> LLMRespon
 PROVIDERS = {
     LLMProvider.OPENAI: _call_openai,
     LLMProvider.ANTHROPIC: _call_anthropic,
-    LLMProvider.KIMI: _call_kimi,
+    LLMProvider.NVIDIA: _call_openai,
+    LLMProvider.KIMI: _call_openai,
+    LLMProvider.VICTOE: _call_openai,
     LLMProvider.OLLAMA: _call_ollama,
     LLMProvider.MOCK: _call_mock,
 }

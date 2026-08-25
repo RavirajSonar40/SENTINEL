@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import Sidebar from "./Sidebar";
 import Footer from "./Footer";
+import ChatBot from "./ChatBot";
 import { AuthProvider, useAuth } from "@/lib/AuthContext";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
@@ -37,6 +38,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
         {children}
         <Footer />
       </div>
+      <ChatBot />
     </div>
   );
 }

@@ -14,6 +14,7 @@ from app.routes.approvals import router as approvals_router
 from app.routes.websocket import router as ws_router
 from app.routes.metrics import router as metrics_router
 from app.routes.system import router as system_router
+from app.routes.chat import router as chat_router
 from app.services.task_queue import start_workers
 from app.core.config import settings
 
@@ -57,6 +58,7 @@ app.include_router(approvals_router)
 app.include_router(ws_router)
 app.include_router(metrics_router)
 app.include_router(system_router)
+app.include_router(chat_router)
 
 
 @app.on_event("startup")

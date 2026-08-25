@@ -521,3 +521,11 @@ export async function getRepoBranches(token: string, owner: string, repo: string
 export async function getPRDiff(token: string, owner: string, repo: string, number: number) {
   return request(`/github/repos/${owner}/${repo}/pulls/${number}/diff`, { token });
 }
+
+export async function sendChatMessage(token: string, message: string, history: { role: string; content: string }[] = []) {
+  return request<{ response: string }>("/chat", {
+    token,
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });
+}

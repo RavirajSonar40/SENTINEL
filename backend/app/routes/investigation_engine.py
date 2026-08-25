@@ -124,7 +124,7 @@ async def trigger_investigation(
             label=h.label,
             description=h.description,
             confidence=h.confidence,
-            status=HypothesisStatus.SUPPORTED.value if h.status == "supported" else HypothesisStatus.ACTIVE.value,
+            status=HypothesisStatus.SUPPORTED.value if h.status == "supported" else HypothesisStatus.PROPOSED.value,
             supporting_evidence_count=h.supporting_count,
             contradicting_evidence_count=h.contradicting_count,
             rejection_reason=h.rejection_reason,

@@ -16,6 +16,7 @@ class RepositoryOut(BaseModel):
     full_name: str
     default_branch: str
     service_id: str | None = None
+    github_url: str | None = None
 
 
 @router.get("", response_model=List[RepositoryOut])
@@ -31,6 +32,7 @@ def list_repositories(
             full_name=r.full_name,
             default_branch=r.default_branch,
             service_id=str(r.service_id) if r.service_id else None,
+            github_url=r.github_url,
         )
         for r in repos
     ]

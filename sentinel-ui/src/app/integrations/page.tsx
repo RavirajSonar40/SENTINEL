@@ -53,6 +53,37 @@ function IntegrationsContent() {
   const [repos, setRepos] = useState<Repository[]>([]);
   const [githubConnected, setGithubConnected] = useState(false);
   const [githubConfigured, setGithubConfigured] = useState(false);
+  const [patInput, setPatInput] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState("");
+  const [connectSuccess, setConnectSuccess] = useState("");
+
+  const handleConnectPAT = async () => {
+    if (!token || !patInput.trim()) return;
+    setConnecting(true);
+    setConnectError("");
+    setConnectSuccess("");
+    try {
+      const res = await fetch(`${API_BASE}/github/connect-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ token: patInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setConnectError(data.detail || "Connection failed");
+      } else {
+        setConnectSuccess(`Connected as ${data.github_user} — ${data.repos_synced} repos synced`);
+        setGithubConnected(true);
+        setPatInput("");
+        listRepositories(token).then(setRepos).catch(() => {});
+      }
+    } catch {
+      setConnectError("Failed to connect");
+    } finally {
+      setConnecting(false);
+    }
+  };
 
   useEffect(() => {
     if (!token) return;
@@ -117,27 +148,65 @@ function IntegrationsContent() {
                     </div>
                     <div className="flex gap-2 flex-wrap">
                       {intg.id === "github" && !githubConnected && (
-                        <button
-                          onClick={() => { window.location.href = `${API_BASE}/github/login`; }}
-                          className="px-4 py-1.5 bg-primary text-on-primary rounded text-[12px] font-medium hover:bg-primary/90 transition-colors"
-                        >
-                          Connect GitHub
-                        </button>
+                        <div className="w-full space-y-2">
+                          <div className="flex gap-2">
+                            <input
+                              type="password"
+                              value={patInput}
+                              onChange={(e) => setPatInput(e.target.value)}
+                              placeholder="ghp_xxxxxxxxxxxx (Personal Access Token)"
+                              className="flex-1 px-3 py-1.5 bg-surface-container border border-outline-variant rounded text-[12px] text-on-surface placeholder:text-outline font-mono"
+                            />
+                            <button
+                              onClick={handleConnectPAT}
+                              disabled={connecting || !patInput.trim()}
+                              className="px-4 py-1.5 bg-primary text-on-primary rounded text-[12px] font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                            >
+                              {connecting ? "Connecting..." : "Connect"}
+                            </button>
+                          </div>
+                          {connectError && (
+                            <div className="text-[11px] text-error">{connectError}</div>
+                          )}
+                          <div className="text-[10px] text-on-surface-variant">
+                            Generate a token at{" "}
+                            <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                              github.com/settings/tokens
+                            </a>{" "}
+                            with <code>repo</code> scope
+                          </div>
+                        </div>
                       )}
                       {intg.id === "github" && githubConnected && (
                         <>
+                          {connectSuccess && (
+                            <div className="w-full text-[11px] text-primary mb-1">{connectSuccess}</div>
+                          )}
                           <Link
                             href="/repositories"
                             className="px-4 py-1.5 bg-surface-container border border-outline-variant text-on-surface rounded text-[12px] font-medium hover:bg-surface-container-high transition-colors"
                           >
                             View Repos ({repos.length})
                           </Link>
-                          <button
-                            onClick={() => { window.location.href = `${API_BASE}/github/login`; }}
-                            className="px-4 py-1.5 bg-surface-container border border-outline-variant text-on-surface-variant rounded text-[12px] font-medium hover:bg-surface-container-high transition-colors"
-                          >
-                            Re-authenticate
-                          </button>
+                          <div className="w-full">
+                            <div className="text-[10px] text-on-surface-variant mb-1">Reconnect with a different token:</div>
+                            <div className="flex gap-2">
+                              <input
+                                type="password"
+                                value={patInput}
+                                onChange={(e) => setPatInput(e.target.value)}
+                                placeholder="ghp_xxxxxxxxxxxx"
+                                className="flex-1 px-3 py-1.5 bg-surface-container border border-outline-variant rounded text-[12px] text-on-surface placeholder:text-outline font-mono"
+                              />
+                              <button
+                                onClick={handleConnectPAT}
+                                disabled={connecting || !patInput.trim()}
+                                className="px-4 py-1.5 bg-surface-container border border-outline-variant text-on-surface-variant rounded text-[12px] font-medium hover:bg-surface-container-high transition-colors disabled:opacity-50"
+                              >
+                                {connecting ? "..." : "Reconnect"}
+                              </button>
+                            </div>
+                          </div>
                         </>
                       )}
                       {intg.id === "webhooks" && (

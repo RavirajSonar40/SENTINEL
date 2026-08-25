@@ -27,6 +27,129 @@ GITHUB_REDIRECT_URI = settings.GITHUB_REDIRECT_URI
 FRONTEND_URL = settings.FRONTEND_URL
 
 
+# --- PAT Connect ---
+
+class TokenConnectRequest(BaseModel):
+    token: str
+
+@router.post("/connect-token")
+async def connect_with_token(
+    payload: TokenConnectRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Connect GitHub using a Personal Access Token."""
+    token = payload.token.strip()
+    if not token.startswith("ghp_") and not token.startswith("github_pat_"):
+        raise HTTPException(400, "Invalid token format. Must start with ghp_ or github_pat_")
+
+    # Validate token and get user info
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if resp.status_code != 200:
+            raise HTTPException(400, "Invalid or expired token")
+        user_data = resp.json()
+
+    github_login = user_data["login"]
+
+    # Store as installation
+    existing = db.query(GitHubInstallation).filter(
+        GitHubInstallation.account_login == github_login
+    ).first()
+    if existing:
+        existing.tokens_encrypted = token
+        existing.updated_at = func.now()
+    else:
+        inst_record = GitHubInstallation(
+            installation_id=str(user_data["id"]),
+            account_type=user_data.get("type", "User"),
+            account_login=github_login,
+            account_id=str(user_data["id"]),
+            target_type="user",
+            permissions={"contents": "read", "metadata": "read"},
+            repository_selection="all",
+            tokens_encrypted=token,
+        )
+        db.add(inst_record)
+
+    db.commit()
+
+    # Auto-sync repos
+    github = GitHubClient(token)
+    try:
+        repos = await github.list_repos()
+        synced = 0
+        for repo_data in repos:
+            owner = repo_data["owner"]["login"]
+            repo_name = repo_data["name"]
+            full_name = repo_data["full_name"]
+
+            repo = db.query(Repository).filter(Repository.full_name == full_name).first()
+            if not repo:
+                repo = Repository(
+                    name=repo_name,
+                    full_name=full_name,
+                    owner_id=current_user.id,
+                    default_branch=repo_data.get("default_branch", "main"),
+                    github_url=repo_data.get("html_url"),
+                    installation_id=existing.id if existing else inst_record.id,
+                )
+                db.add(repo)
+            else:
+                repo.default_branch = repo_data.get("default_branch", "main")
+                repo.github_url = repo_data.get("html_url")
+            synced += 1
+
+        db.commit()
+        return {"connected": True, "github_user": github_login, "repos_synced": synced}
+    except Exception as e:
+        db.commit()
+        return {"connected": True, "github_user": github_login, "repos_synced": 0, "error": str(e)}
+
+
+@router.post("/sync-token")
+async def sync_repos_token(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Sync repos using stored PAT."""
+    installation = db.query(GitHubInstallation).first()
+    if not installation:
+        raise HTTPException(404, "No GitHub connection found")
+
+    token = installation.tokens_encrypted
+    github = GitHubClient(token)
+
+    try:
+        repos = await github.list_repos()
+        synced = 0
+        for repo_data in repos:
+            full_name = repo_data["full_name"]
+            repo = db.query(Repository).filter(Repository.full_name == full_name).first()
+            if not repo:
+                repo = Repository(
+                    name=repo_data["name"],
+                    full_name=full_name,
+                    owner_id=current_user.id,
+                    default_branch=repo_data.get("default_branch", "main"),
+                    github_url=repo_data.get("html_url"),
+                    installation_id=installation.id,
+                )
+                db.add(repo)
+            else:
+                repo.default_branch = repo_data.get("default_branch", "main")
+                repo.github_url = repo_data.get("html_url")
+            synced += 1
+        db.commit()
+        return {"synced": synced, "status": "completed"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"Sync failed: {e}")
+
+
 # --- OAuth ---
 
 @router.get("/login")

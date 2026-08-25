@@ -6,6 +6,8 @@ import TopBar from "@/components/TopBar";
 import { useAuth } from "@/lib/AuthContext";
 import { listRepositories, Repository } from "@/lib/api";
 
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+
 const syncStatusStyles: Record<string, string> = {
   synced: "bg-primary/10 text-primary border-primary/20",
   pending: "bg-tertiary/10 text-tertiary border-tertiary/20",
@@ -19,6 +21,8 @@ export default function RepositoriesPage() {
   const [repos, setRepos] = useState<Repository[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [syncAllLoading, setSyncAllLoading] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -27,6 +31,44 @@ export default function RepositoriesPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [token]);
+
+  const handleSync = async (repoId: string) => {
+    if (!token || syncingId) return;
+    setSyncingId(repoId);
+    try {
+      const res = await fetch(`${API_BASE}/github/sync-token`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      if (res.ok) {
+        const updated = await listRepositories(token);
+        setRepos(updated);
+      }
+    } catch (e) {
+      console.error("Sync failed:", e);
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+  const handleSyncAll = async () => {
+    if (!token || syncAllLoading) return;
+    setSyncAllLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/github/sync-token`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      if (res.ok) {
+        const updated = await listRepositories(token);
+        setRepos(updated);
+      }
+    } catch (e) {
+      console.error("Sync all failed:", e);
+    } finally {
+      setSyncAllLoading(false);
+    }
+  };
 
   const filtered = repos.filter((r) =>
     r.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -39,13 +81,23 @@ export default function RepositoriesPage() {
         title="Repositories"
         subtitle="Manage connected repositories and sync status."
         actions={
-          <Link
-            href="/integrations"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-high border border-outline-variant text-on-surface text-[11px] font-semibold uppercase tracking-wider rounded-md hover:bg-surface-bright transition-colors"
-          >
-            <span className="material-symbols-outlined text-[14px]">hub</span>
-            Integrations
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSyncAll}
+              disabled={syncAllLoading || repos.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-high border border-outline-variant text-on-surface text-[11px] font-semibold uppercase tracking-wider rounded-md hover:bg-surface-bright transition-colors disabled:opacity-50"
+            >
+              <span className={`material-symbols-outlined text-[14px] ${syncAllLoading ? "animate-spin" : ""}`}>sync</span>
+              {syncAllLoading ? "Syncing..." : "Sync All"}
+            </button>
+            <Link
+              href="/integrations"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-high border border-outline-variant text-on-surface text-[11px] font-semibold uppercase tracking-wider rounded-md hover:bg-surface-bright transition-colors"
+            >
+              <span className="material-symbols-outlined text-[14px]">hub</span>
+              Integrations
+            </Link>
+          </div>
         }
       />
       <main className="flex-1 p-6 overflow-x-auto pb-10">
@@ -114,8 +166,13 @@ export default function RepositoriesPage() {
                       <td className="py-3 px-4 text-on-surface-variant">{repo.service_id ? "Linked" : "—"}</td>
                       <td className="py-3 px-4 text-on-surface-variant">Never</td>
                       <td className="py-3 px-4 text-right">
-                        <button className="text-on-surface-variant hover:text-primary transition-colors disabled:opacity-30" disabled>
-                          <span className="material-symbols-outlined text-[16px]">sync</span>
+                        <button
+                          onClick={() => handleSync(repo.id)}
+                          disabled={syncingId === repo.id}
+                          className="text-on-surface-variant hover:text-primary transition-colors disabled:opacity-30"
+                          title="Sync repository"
+                        >
+                          <span className={`material-symbols-outlined text-[16px] ${syncingId === repo.id ? "animate-spin" : ""}`}>sync</span>
                         </button>
                       </td>
                     </tr>

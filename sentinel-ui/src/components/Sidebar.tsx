@@ -128,10 +128,13 @@ export default function Sidebar() {
           <span className="material-symbols-outlined text-[16px]">add</span>
           Report Production Error
         </Link>
-        <button className="flex items-center gap-2 w-full px-3 py-2 mt-1 text-on-surface-variant text-[12px] font-medium hover:bg-surface-container-high rounded-md transition-colors">
+        <button
+          onClick={() => window.open("https://github.com/RavirajSonar40/SENTINEL#readme", "_blank")}
+          className="flex items-center gap-2 w-full px-3 py-2 mt-1 text-on-surface-variant text-[12px] font-medium hover:bg-surface-container-high rounded-md transition-colors"
+        >
           <span className="material-symbols-outlined text-[16px]">help</span>
           Help & Support
-          <span className="material-symbols-outlined text-[14px] ml-auto">chevron_right</span>
+          <span className="material-symbols-outlined text-[14px] ml-auto">open_in_new</span>
         </button>
       </div>
     </nav>

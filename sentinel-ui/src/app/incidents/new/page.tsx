@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
@@ -41,6 +41,9 @@ export default function NewIncident() {
   const [autoDetect, setAutoDetect] = useState(true);
   const [additionalContext, setAdditionalContext] = useState("");
   const [incidentTime, setIncidentTime] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [branch, setBranch] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -116,7 +119,28 @@ export default function NewIncident() {
                 </p>
                 <div className="relative">
                   <div className="absolute top-2 right-2 flex items-center gap-2">
-                    <button type="button" className="text-[11px] text-on-surface-variant hover:text-primary flex items-center gap-1 transition-colors">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".log,.txt,.json,.csv,.out,.err"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          const text = ev.target?.result as string;
+                          setErrorLog(text.slice(0, 50000));
+                        };
+                        reader.readAsText(file);
+                        e.target.value = "";
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="text-[11px] text-on-surface-variant hover:text-primary flex items-center gap-1 transition-colors"
+                    >
                       <span className="material-symbols-outlined text-[14px]">upload</span>
                       Import from file
                     </button>
@@ -239,10 +263,43 @@ export default function NewIncident() {
                   )}
                 </div>
 
-                <button type="button" className="flex items-center gap-2 text-[12px] text-on-surface-variant hover:text-primary transition-colors">
-                  <span className="material-symbols-outlined text-[16px]">expand_more</span>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="flex items-center gap-2 text-[12px] text-on-surface-variant hover:text-primary transition-colors"
+                >
+                  <span className={`material-symbols-outlined text-[16px] transition-transform ${showAdvanced ? "rotate-180" : ""}`}>
+                    expand_more
+                  </span>
                   Advanced Options (Narrow down repositories, branches, tags, etc.)
                 </button>
+
+                {showAdvanced && (
+                  <div className="mt-3 pt-3 border-t border-outline-variant space-y-3">
+                    <div>
+                      <label className="text-[12px] text-on-surface-variant mb-1 block">Branch (optional)</label>
+                      <input
+                        type="text"
+                        value={branch}
+                        onChange={(e) => setBranch(e.target.value)}
+                        className="w-full px-3 py-2 font-mono text-[13px] text-on-surface bg-surface-container border border-outline-variant rounded-md focus:border-primary focus:outline-none"
+                        placeholder="e.g., main, develop, release/v2.8"
+                      />
+                      <p className="text-[11px] text-on-surface-variant mt-1">Limit investigation to a specific branch</p>
+                    </div>
+                    {repos.length > 0 && (
+                      <div>
+                        <label className="text-[12px] text-on-surface-variant mb-1 block">Specific Files (optional)</label>
+                        <input
+                          type="text"
+                          className="w-full px-3 py-2 font-mono text-[13px] text-on-surface bg-surface-container border border-outline-variant rounded-md focus:border-primary focus:outline-none"
+                          placeholder="e.g., src/payment/charge.ts, auth/handler.go"
+                        />
+                        <p className="text-[11px] text-on-surface-variant mt-1">Comma-separated file paths to focus on</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {error && (

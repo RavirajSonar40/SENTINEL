@@ -210,12 +210,12 @@ function IntegrationsContent() {
                         </>
                       )}
                       {intg.id === "webhooks" && (
-                        <Link
-                          href="/webhooks/config"
+                        <button
+                          onClick={() => document.getElementById("webhook-endpoints")?.scrollIntoView({ behavior: "smooth" })}
                           className="px-4 py-1.5 bg-surface-container border border-outline-variant text-on-surface rounded text-[12px] font-medium hover:bg-surface-container-high transition-colors"
                         >
                           View Endpoints
-                        </Link>
+                        </button>
                       )}
                     </div>
                   </div>
@@ -225,7 +225,7 @@ function IntegrationsContent() {
           })}
 
           {/* Webhook Endpoints */}
-          <div className="bg-surface-container-low border border-outline-variant rounded-lg p-4">
+          <div id="webhook-endpoints" className="bg-surface-container-low border border-outline-variant rounded-lg p-4">
             <h3 className="text-[13px] font-semibold text-on-surface mb-3">Webhook Endpoints</h3>
             <p className="text-[12px] text-on-surface-variant mb-3">
               POST JSON payloads to these endpoints. Sentinel auto-detects the source format.

@@ -67,6 +67,21 @@ export default function Dashboard() {
   const resolved = incidents.filter((i) => i.status === "resolved");
   const critical = incidents.filter((i) => i.severity === "SEV-1" && !["resolved", "cancelled"].includes(i.status));
 
+  const computeMTTR = () => {
+    const resolvedIncidents = incidents.filter((i) => i.status === "resolved" && i.resolved_at && i.created_at);
+    if (resolvedIncidents.length === 0) return { value: "—", detail: "No resolved incidents" };
+    const totalMinutes = resolvedIncidents.reduce((sum, inc) => {
+      const diff = new Date(inc.resolved_at!).getTime() - new Date(inc.created_at).getTime();
+      return sum + diff / 60000;
+    }, 0);
+    const avgMinutes = totalMinutes / resolvedIncidents.length;
+    if (avgMinutes < 60) return { value: `${Math.round(avgMinutes)}m`, detail: `Based on ${resolvedIncidents.length} incidents` };
+    const hrs = Math.floor(avgMinutes / 60);
+    const mins = Math.round(avgMinutes % 60);
+    return { value: `${hrs}h ${mins}m`, detail: `Based on ${resolvedIncidents.length} incidents` };
+  };
+  const mttr = computeMTTR();
+
   return (
     <>
       <TopBar title="Overview" />
@@ -93,8 +108,8 @@ export default function Dashboard() {
             />
             <StatCard
               label="MTTR (30d)"
-              value="—"
-              detail="No data yet"
+              value={mttr.value}
+              detail={mttr.detail}
               icon="schedule"
               color="tertiary"
               trend={null}

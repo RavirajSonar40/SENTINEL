@@ -711,6 +711,15 @@ export default function InvestigationDetail() {
                 <p className="text-[12px] text-on-surface-variant mt-4">
                   Investigation details, hypotheses, evidence, and proposed fixes will appear here once the investigation engine is active.
                 </p>
+                {incident.status === "created" && (
+                  <button
+                    onClick={handleRunInvestigation}
+                    className="mt-4 px-4 py-2 bg-primary-container text-on-primary-container text-[12px] font-semibold uppercase tracking-wider rounded-md border border-primary hover:bg-primary hover:text-on-primary-fixed transition-colors flex items-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">play_arrow</span>
+                    Start Investigation
+                  </button>
+                )}
               </div>
             )}
           </div>

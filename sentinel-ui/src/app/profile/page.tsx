@@ -47,7 +47,7 @@ export default function ProfilePage() {
               <h2 className="text-[18px] font-semibold text-on-surface">{profile?.username || username || "Admin"}</h2>
               <p className="text-[13px] text-on-surface-variant">{profile?.email || "No email set"}</p>
               <span className="inline-block mt-1 px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-semibold rounded border border-primary/20">
-                {loading ? "..." : "Admin"}
+                {loading ? "..." : (profile?.role || "Admin")}
               </span>
             </div>
           </div>
@@ -70,7 +70,7 @@ export default function ProfilePage() {
               </div>
               <div className="flex justify-between items-center py-2 border-b border-outline-variant/50">
                 <span className="text-[12px] text-on-surface-variant">Role</span>
-                <span className="text-[12px] text-on-surface">Admin</span>
+                <span className="text-[12px] text-on-surface">{profile?.role || "Admin"}</span>
               </div>
               <div className="flex justify-between items-center py-2">
                 <span className="text-[12px] text-on-surface-variant">Session Status</span>

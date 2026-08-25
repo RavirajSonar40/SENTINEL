@@ -50,6 +50,7 @@ export interface UserProfile {
   id: string;
   username: string;
   email: string;
+  role?: string;
 }
 
 export async function getMe(token: string): Promise<UserProfile> {

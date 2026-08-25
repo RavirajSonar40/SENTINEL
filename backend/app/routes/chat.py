@@ -66,26 +66,30 @@ def build_context(db: Session, user_id) -> str:
     return "\n".join(parts)
 
 
-SYSTEM_PROMPT = """You are Sentinel AI Assistant, an expert incident response helper for the Sentinel platform.
+SYSTEM_PROMPT = """You are Sentinel AI Assistant — an expert AI helper for software engineers. You help with TWO main areas:
 
-Your role is to help users understand:
-- What incidents have been detected and their status
-- Root cause analysis findings and confidence levels
-- Proposed code fixes and why they were suggested
-- Investigation progress and evidence collected
-- Repository health and deployment status
-- How to use Sentinel features
+## 1. Incident Response (Primary)
+- Analyze production incidents, errors, crashes
+- Investigate root causes using code, logs, and metrics
+- Propose code fixes and create draft PRs
+- Explain investigation findings and evidence
+
+## 2. General Development Tasks
+- Answer questions about code, architecture, best practices
+- Suggest code changes (colors, layouts, functionality, refactoring)
+- Explain how things work in the codebase
+- Help with debugging, testing, documentation
+- Provide guidance on technologies, frameworks, patterns
+
+When the user asks you to DO something (like "change the color to blue"), explain:
+1. What file(s) need to change
+2. What the exact code change would be
+3. How to apply it
 
 You have access to the user's incident data, investigations, proposed fixes, and connected repositories.
 
-When explaining code changes or PR decisions:
-- Reference specific investigation findings that led to the fix
-- Explain the root cause and why the fix addresses it
-- Mention confidence scores and evidence
-- Be technical but clear
-
 Always be helpful, concise, and accurate. If you don't have specific data about something, say so clearly.
-Do not make up information. Base your answers only on the context provided."""
+Do not make up information. Base your answers on the context provided."""
 
 
 async def call_llm(message: str, context: str, history: List[ChatMessage]) -> str:
@@ -200,7 +204,7 @@ async def call_gemini_native(messages: list, api_key: str, provider: str) -> str
 
 
 def generate_local_response(message: str, context: str) -> str:
-    """Generate a helpful response using context when Gemini is unavailable."""
+    """Generate a helpful response using context when LLM is unavailable."""
     msg_lower = message.lower()
 
     if any(w in msg_lower for w in ["incident", "error", "issue", "problem"]):
@@ -228,23 +232,34 @@ def generate_local_response(message: str, context: str) -> str:
             return f"Root causes identified:\n\n" + "\n".join(f"- {l}" for l in lines)
         return "No root causes have been identified yet. Sentinel determines root causes during investigation by analyzing code changes, logs, and metrics."
 
+    if any(w in msg_lower for w in ["color", "colour", "style", "theme", "font", "size", "layout", "design"]):
+        return ("I can help with UI changes! To change something in the codebase:\n\n"
+                "1. Tell me exactly what you want changed (e.g., 'change the sidebar background to #1a1a1a')\n"
+                "2. I'll tell you which file to edit and the exact code change\n"
+                "3. You can apply it manually, or ask me to make the change\n\n"
+                "**Tip**: For Sentinel, UI files are in `sentinel-ui/src/`. "
+                "Colors are defined in `globals.css`, components are in `src/components/`.")
+
+    if any(w in msg_lower for w in ["change", "update", "modify", "edit", "replace"]):
+        return ("I can help you make changes! Tell me:\n\n"
+                "1. **What** to change (e.g., 'the header color', 'the login button text')\n"
+                "2. **Where** (which page or component)\n"
+                "3. **What value** (the new color, text, behavior)\n\n"
+                "I'll identify the file and give you the exact code change needed.")
+
     if any(w in msg_lower for w in ["help", "how", "what can"]):
         return """I'm Sentinel AI Assistant. Here's what I can help with:
 
-**Incidents**: Ask about detected incidents, their severity, status, and timeline
-**Root Cause**: Learn about identified root causes and supporting evidence
-**Fixes**: Understand proposed code fixes, why they were made, and their validation status
-**PRs**: Review draft pull requests created from fixes
-**Repositories**: See connected repos and their sync status
-**Investigations**: Track investigation progress and confidence scores
+**Incident Response**: Ask about incidents, root causes, fixes, and investigations
+**Code Changes**: Tell me what to change (colors, layout, text, functionality)
+**Questions**: Ask about any technology, framework, or coding concept
+**Debugging**: Describe the error and I'll help find the cause
+**Architecture**: Get advice on how to structure your code
 
-Just ask me anything about your incident response data!"""
+Just ask me anything!"""
 
     if any(w in msg_lower for w in ["hello", "hi", "hey"]):
-        return "Hello! I'm Sentinel AI Assistant. I can help you understand incidents, investigations, code fixes, and more. What would you like to know?"
-
-    if "context" in msg_lower and "no " in context.lower():
-        return "The system is ready but no data has been collected yet. To get started:\n\n1. Connect GitHub in **Integrations**\n2. Report an incident via **Report Production Error**\n3. Let Sentinel investigate automatically\n\nI'll then be able to answer detailed questions about your incidents and fixes!"
+        return "Hello! I'm Sentinel AI Assistant. I can help with incidents, code changes, debugging, and more. What would you like to do?"
 
     return f"I can help you with that! Based on your current data:\n\n{context[:500]}\n\nCould you be more specific about what you'd like to know?"
 

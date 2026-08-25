@@ -147,7 +147,7 @@ export default function ChatBot() {
     { label: "What incidents are open?", icon: "warning" },
     { label: "Show recent fixes", icon: "build" },
     { label: "How does Sentinel work?", icon: "help" },
-    { label: "What repos are connected?", icon: "folder" },
+    { label: "Change the header color to blue", icon: "palette" },
   ];
 
   const handleQuickAction = (message: string) => {

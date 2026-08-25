@@ -164,7 +164,7 @@ def generate_hypotheses(state: InvestigationState) -> List[Hypothesis]:
                 category=category,
             )
             if h.id not in seen:
-                seen.add(h)
+                seen.add(h.id)
                 hypotheses.append(h)
 
     # Sort by confidence

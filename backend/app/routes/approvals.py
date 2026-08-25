@@ -153,7 +153,7 @@ async def list_pending_approvals(
             "incident_number": incident.number if incident else None,
             "incident_title": incident.title if incident else None,
             "auto_merge_eligible": check_auto_merge_eligibility(fix),
-            "created_at": fix.created_at.isoformat() if fix.created_at else None,
+            "created_at": fix.generated_at.isoformat() if fix.generated_at else None,
         })
 
     return results

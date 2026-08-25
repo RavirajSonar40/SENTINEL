@@ -224,7 +224,7 @@ async def generate_draft_pr(
     branch_name = request.branch_name or generate_branch_name(incident, fix)
 
     # Update fix status
-    fix.status = FixStatus.IN_PROGRESS.value
+    fix.status = FixStatus.GENERATED.value
     db.commit()
 
     return PRResponse(

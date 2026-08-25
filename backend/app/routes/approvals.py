@@ -45,7 +45,7 @@ def process_approval(
     status_map = {
         "approve": ApprovalStatus.APPROVED,
         "reject": ApprovalStatus.REJECTED,
-        "request_changes": ApprovalStatus.CHANGES_REQUESTED,
+        "request_changes": ApprovalStatus.MODIFIED,
     }
     approval_status = status_map.get(action)
     if not approval_status:

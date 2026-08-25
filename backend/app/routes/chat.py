@@ -89,7 +89,9 @@ Do not make up information. Base your answers only on the context provided."""
 async def call_gemini(message: str, context: str, history: List[ChatMessage]) -> str:
     """Call Gemini API with the user's message and context."""
     api_key = settings.LLM_API_KEY
-    if not api_key or settings.LLM_PROVIDER != "gemini":
+    provider = settings.LLM_PROVIDER
+    
+    if not api_key or provider != "gemini":
         return generate_local_response(message, context)
 
     contents = []

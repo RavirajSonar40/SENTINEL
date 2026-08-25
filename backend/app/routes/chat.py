@@ -88,53 +88,115 @@ Always be helpful, concise, and accurate. If you don't have specific data about 
 Do not make up information. Base your answers only on the context provided."""
 
 
-async def call_gemini(message: str, context: str, history: List[ChatMessage]) -> str:
-    """Call Gemini API with the user's message and context."""
+async def call_llm(message: str, context: str, history: List[ChatMessage]) -> str:
+    """Call the configured LLM provider."""
     api_key = settings.LLM_API_KEY
     provider = settings.LLM_PROVIDER
     
-    logger.info(f"Chat request - provider={provider}, key_present={bool(api_key)}, key_prefix={api_key[:10] if api_key else 'None'}...")
+    logger.info(f"Chat request - provider={provider}, key_present={bool(api_key)}")
     
-    if not api_key or provider != "gemini":
-        logger.warning(f"Chat falling back to local: provider={provider}, key_empty={not api_key}")
+    if not api_key or provider == "mock":
+        logger.warning("Chat falling back to local: no provider or mock mode")
         return generate_local_response(message, context)
 
-    contents = []
+    system_msg = f"""{SYSTEM_PROMPT}
+
+Context about the Sentinel system:
+{context}"""
+
+    messages = [{"role": "system", "content": system_msg}]
     for msg in history[-10:]:
-        contents.append({"role": "user" if msg.role == "user" else "model", "parts": [{"text": msg.content}]})
+        messages.append({"role": msg.role, "content": msg.content})
+    messages.append({"role": "user", "content": message})
 
-    user_message = f"""Context about the Sentinel system:
-{context}
+    if provider in ("nvidia", "ollama", "openai", "deepseek"):
+        return await call_openai_compatible(messages, api_key, provider)
+    elif provider == "gemini":
+        return await call_gemini_native(messages, api_key, provider)
+    else:
+        return generate_local_response(message, context)
 
-User question: {message}
 
-Answer based on the context above. Be helpful and technical."""
+async def call_openai_compatible(messages: list, api_key: str, provider: str) -> str:
+    """Call any OpenAI-compatible API (NVIDIA NIM, Ollama, DeepSeek, OpenAI)."""
+    base_urls = {
+        "nvidia": "https://integrate.api.nvidia.com/v1",
+        "ollama": "http://localhost:11434/v1",
+        "openai": "https://api.openai.com/v1",
+        "deepseek": "https://api.deepseek.com/v1",
+    }
+    base_url = settings.LLM_BASE_URL or base_urls.get(provider, "https://integrate.api.nvidia.com/v1")
 
-    contents.append({"role": "user", "parts": [{"text": user_message}]})
+    model_map = {
+        "nvidia": settings.LLM_MODEL or "nvidia/nemotron-3-ultra-550b-a55b",
+        "ollama": settings.LLM_MODEL or "llama3.2",
+        "openai": settings.LLM_MODEL or "gpt-4",
+        "deepseek": settings.LLM_MODEL or "deepseek-chat",
+    }
+    model = model_map.get(provider, "nvidia/nemotron-3-ultra-550b-a55b")
+
+    url = f"{base_url}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 2048,
+        "top_p": 0.9,
+    }
+
+    logger.info(f"Calling {provider}: model={model}, url={url}")
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        logger.info(f"{provider} response: status={resp.status_code}")
+
+        if resp.status_code != 200:
+            logger.error(f"{provider} API error: {resp.text[:500]}")
+            return generate_local_response(messages[-1]["content"], "")
+
+        data = resp.json()
+        try:
+            text = data["choices"][0]["message"]["content"]
+            logger.info(f"{provider} response length: {len(text)} chars")
+            return text
+        except (KeyError, IndexError) as e:
+            logger.error(f"{provider} parse error: {e}, data={str(data)[:500]}")
+            return generate_local_response(messages[-1]["content"], "")
+
+
+async def call_gemini_native(messages: list, api_key: str, provider: str) -> str:
+    """Call Google Gemini native API."""
+    contents = []
+    for msg in messages:
+        if msg["role"] == "system":
+            contents.append({"role": "user", "parts": [{"text": msg["content"]}]})
+        else:
+            role = "user" if msg["role"] == "user" else "model"
+            contents.append({"role": role, "parts": [{"text": msg["content"]}]})
 
     model_name = settings.LLM_MODEL or "gemini-2.0-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-    
-    logger.info(f"Calling Gemini: model={model_name}, contents_count={len(contents)}")
+
+    logger.info(f"Calling Gemini: model={model_name}")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(url, json={"contents": contents})
         logger.info(f"Gemini response: status={resp.status_code}")
-        
+
         if resp.status_code != 200:
             logger.error(f"Gemini API error: {resp.text[:500]}")
-            return generate_local_response(message, context)
-        
+            return generate_local_response(messages[-1]["content"], "")
+
         data = resp.json()
-        logger.info(f"Gemini data keys: {list(data.keys())}")
-        
         try:
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            logger.info(f"Gemini response length: {len(text)} chars")
-            return text
+            return data["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError) as e:
-            logger.error(f"Gemini parse error: {e}, data={str(data)[:500]}")
-            return generate_local_response(message, context)
+            logger.error(f"Gemini parse error: {e}")
+            return generate_local_response(messages[-1]["content"], "")
 
 
 def generate_local_response(message: str, context: str) -> str:
@@ -197,8 +259,9 @@ async def chat(
     history = [ChatMessage(role=m.role, content=m.content) for m in request.history]
 
     try:
-        response = await call_gemini(request.message, context, history)
-    except Exception:
+        response = await call_llm(request.message, context, history)
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
         response = generate_local_response(request.message, context)
 
     return ChatResponse(response=response)

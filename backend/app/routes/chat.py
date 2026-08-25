@@ -3,12 +3,14 @@ from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy.orm import Session
 import httpx
+import logging
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.core.config import Settings
 from app.models.incident import User, Incident, Investigation, ProposedFix, Repository
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 settings = Settings()
@@ -91,7 +93,10 @@ async def call_gemini(message: str, context: str, history: List[ChatMessage]) ->
     api_key = settings.LLM_API_KEY
     provider = settings.LLM_PROVIDER
     
+    logger.info(f"Chat request - provider={provider}, key_present={bool(api_key)}, key_prefix={api_key[:10] if api_key else 'None'}...")
+    
     if not api_key or provider != "gemini":
+        logger.warning(f"Chat falling back to local: provider={provider}, key_empty={not api_key}")
         return generate_local_response(message, context)
 
     contents = []
@@ -109,15 +114,26 @@ Answer based on the context above. Be helpful and technical."""
 
     model_name = settings.LLM_MODEL or "gemini-2.0-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+    
+    logger.info(f"Calling Gemini: model={model_name}, contents_count={len(contents)}")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(url, json={"contents": contents})
+        logger.info(f"Gemini response: status={resp.status_code}")
+        
         if resp.status_code != 200:
+            logger.error(f"Gemini API error: {resp.text[:500]}")
             return generate_local_response(message, context)
+        
         data = resp.json()
+        logger.info(f"Gemini data keys: {list(data.keys())}")
+        
         try:
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError):
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            logger.info(f"Gemini response length: {len(text)} chars")
+            return text
+        except (KeyError, IndexError) as e:
+            logger.error(f"Gemini parse error: {e}, data={str(data)[:500]}")
             return generate_local_response(message, context)
 
 

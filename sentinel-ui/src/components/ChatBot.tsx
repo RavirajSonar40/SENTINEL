@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useAuth } from "@/lib/AuthContext";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
@@ -21,8 +21,22 @@ export default function ChatBot() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [size, setSize] = useState({ w: 400, h: 560 });
+  const [isMaximized, setIsMaximized] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+
+  const dragOffset = useRef({ x: 0, y: 0 });
+  const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
+  const windowRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setPosition({ x: window.innerWidth - 420, y: window.innerHeight - 620 });
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -31,6 +45,72 @@ export default function ChatBot() {
   useEffect(() => {
     if (isOpen) inputRef.current?.focus();
   }, [isOpen]);
+
+  // Drag handlers
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    if (isMaximized) return;
+    e.preventDefault();
+    setIsDragging(true);
+    dragOffset.current = {
+      x: e.clientX - position.x,
+      y: e.clientY - position.y,
+    };
+  }, [position, isMaximized]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const onMove = (e: MouseEvent) => {
+      setPosition({
+        x: Math.max(0, Math.min(window.innerWidth - 100, e.clientX - dragOffset.current.x)),
+        y: Math.max(0, Math.min(window.innerHeight - 60, e.clientY - dragOffset.current.y)),
+      });
+    };
+    const onUp = () => setIsDragging(false);
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [isDragging]);
+
+  // Resize handlers
+  const onResizeStart = useCallback((e: React.MouseEvent) => {
+    if (isMaximized) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+    resizeStart.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h };
+  }, [size, isMaximized]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const onMove = (e: MouseEvent) => {
+      setSize({
+        w: Math.max(320, Math.min(window.innerWidth - 20, resizeStart.current.w + (e.clientX - resizeStart.current.x))),
+        h: Math.max(300, Math.min(window.innerHeight - 20, resizeStart.current.h + (e.clientY - resizeStart.current.y))),
+      });
+    };
+    const onUp = () => setIsResizing(false);
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [isResizing]);
+
+  const toggleMaximize = () => {
+    if (isMaximized) {
+      setIsMaximized(false);
+      setPosition({ x: window.innerWidth - 420, y: window.innerHeight - 620 });
+      setSize({ w: 400, h: 560 });
+    } else {
+      setIsMaximized(true);
+      setPosition({ x: 0, y: 0 });
+      setSize({ w: window.innerWidth, h: window.innerHeight });
+    }
+  };
 
   const sendMessage = async () => {
     if (!input.trim() || loading || !token) return;
@@ -70,33 +150,89 @@ export default function ChatBot() {
     { label: "What repos are connected?", icon: "folder" },
   ];
 
+  const handleQuickAction = (message: string) => {
+    setMessages((prev) => [...prev, { role: "user", content: message }]);
+    setLoading(true);
+    fetch(`${API_BASE}/chat`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message,
+        history: messages.map((m) => ({ role: m.role, content: m.content })),
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
+      })
+      .catch(() => {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "Sorry, couldn't process that." },
+        ]);
+      })
+      .finally(() => setLoading(false));
+  };
+
   return (
     <>
       {/* Floating Button */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={`fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all ${
-          isOpen
-            ? "bg-surface-container-high border border-outline-variant rotate-0"
-            : "bg-primary hover:bg-primary/90"
-        }`}
-      >
-        <span className="material-symbols-outlined text-[24px] text-on-primary">
-          {isOpen ? "close" : "smart_toy"}
-        </span>
-      </button>
+      {!isOpen && (
+        <button
+          onClick={() => setIsOpen(true)}
+          className="fixed bottom-6 right-6 z-[9999] w-14 h-14 rounded-full bg-primary hover:bg-primary/90 shadow-lg flex items-center justify-center transition-all"
+        >
+          <span className="material-symbols-outlined text-[24px] text-on-primary">smart_toy</span>
+        </button>
+      )}
 
       {/* Chat Window */}
       {isOpen && (
-        <div className="fixed bottom-24 right-6 z-50 w-[380px] h-[520px] bg-surface-container-lowest border border-outline-variant rounded-lg shadow-2xl flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 bg-surface-container-low border-b border-outline-variant">
+        <div
+          ref={windowRef}
+          className={`fixed z-[9999] bg-surface-container-lowest border border-outline-variant rounded-lg shadow-2xl flex flex-col overflow-hidden ${
+            isMaximized ? "" : "rounded-lg"
+          } ${isDragging || isResizing ? "select-none" : ""}`}
+          style={{
+            left: position.x,
+            top: position.y,
+            width: size.w,
+            height: size.h,
+          }}
+        >
+          {/* Header — draggable */}
+          <div
+            onMouseDown={onDragStart}
+            onDoubleClick={toggleMaximize}
+            className="flex items-center gap-3 px-4 py-3 bg-surface-container-low border-b border-outline-variant cursor-move shrink-0"
+          >
             <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
               <span className="material-symbols-outlined text-[16px] text-on-primary">smart_toy</span>
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <div className="text-[13px] font-semibold text-on-surface">Sentinel AI</div>
-              <div className="text-[10px] text-on-surface-variant">Ask anything about incidents & fixes</div>
+              <div className="text-[10px] text-on-surface-variant">Drag to move · Double-click to maximize</div>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={toggleMaximize}
+                className="w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container-high transition-colors"
+                title={isMaximized ? "Restore" : "Maximize"}
+              >
+                <span className="material-symbols-outlined text-[16px] text-on-surface-variant">
+                  {isMaximized ? "fullscreen_exit" : "fullscreen"}
+                </span>
+              </button>
+              <button
+                onClick={() => setIsOpen(false)}
+                className="w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container-high transition-colors"
+                title="Close"
+              >
+                <span className="material-symbols-outlined text-[16px] text-on-surface-variant">close</span>
+              </button>
             </div>
           </div>
 
@@ -129,45 +265,13 @@ export default function ChatBot() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Quick Actions (only show at start) */}
+          {/* Quick Actions */}
           {messages.length <= 1 && (
-            <div className="px-4 pb-2 flex flex-wrap gap-1.5">
+            <div className="px-4 pb-2 flex flex-wrap gap-1.5 shrink-0">
               {quickActions.map((action) => (
                 <button
                   key={action.label}
-                  onClick={() => {
-                    setInput(action.label);
-                    setTimeout(() => {
-                      setInput(action.label);
-                      const fakeEvent = { preventDefault: () => {} };
-                      // Trigger send
-                      setMessages((prev) => [...prev, { role: "user", content: action.label }]);
-                      setLoading(true);
-                      fetch(`${API_BASE}/chat`, {
-                        method: "POST",
-                        headers: {
-                          Authorization: `Bearer ${token}`,
-                          "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                          message: action.label,
-                          history: messages.map((m) => ({ role: m.role, content: m.content })),
-                        }),
-                      })
-                        .then((r) => r.json())
-                        .then((data) => {
-                          setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
-                        })
-                        .catch(() => {
-                          setMessages((prev) => [
-                            ...prev,
-                            { role: "assistant", content: "Sorry, couldn't process that." },
-                          ]);
-                        })
-                        .finally(() => setLoading(false));
-                    }, 100);
-                    setInput("");
-                  }}
+                  onClick={() => handleQuickAction(action.label)}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-container border border-outline-variant rounded text-[10px] text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors"
                 >
                   <span className="material-symbols-outlined text-[12px]">{action.icon}</span>
@@ -178,7 +282,7 @@ export default function ChatBot() {
           )}
 
           {/* Input */}
-          <div className="px-4 py-3 border-t border-outline-variant bg-surface-container-low">
+          <div className="px-4 py-3 border-t border-outline-variant bg-surface-container-low shrink-0">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -203,6 +307,32 @@ export default function ChatBot() {
               </button>
             </form>
           </div>
+
+          {/* Resize handle — bottom-right corner */}
+          {!isMaximized && (
+            <div
+              onMouseDown={onResizeStart}
+              className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize flex items-end justify-end p-0.5 group"
+              title="Resize"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                className="text-on-surface-variant group-hover:text-primary transition-colors"
+              >
+                <path d="M11 1L1 11M11 5L5 11M11 9L9 11" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              </svg>
+            </div>
+          )}
+
+          {/* Resize handles — edges */}
+          {!isMaximized && (
+            <>
+              <div onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); resizeStart.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h }; const onMove = (ev: MouseEvent) => { setSize(s => ({ ...s, w: Math.max(320, s.w + (ev.clientX - resizeStart.current.x)) })); resizeStart.current.x = ev.clientX; }; const onUp = () => { setIsResizing(false); document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }; document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp); }} className="absolute top-12 right-0 w-1 h-full cursor-ew-resize" />
+              <div onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); resizeStart.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h }; const onMove = (ev: MouseEvent) => { setSize(s => ({ ...s, h: Math.max(300, s.h + (ev.clientY - resizeStart.current.y)) })); resizeStart.current.y = ev.clientY; }; const onUp = () => { setIsResizing(false); document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }; document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp); }} className="absolute bottom-0 left-0 w-full h-1 cursor-ns-resize" />
+            </>
+          )}
         </div>
       )}
     </>

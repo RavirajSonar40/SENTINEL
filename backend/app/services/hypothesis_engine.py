@@ -339,17 +339,22 @@ def identify_root_cause(
     seen_categories.add(winner.category)
 
     # Collect related evidence
-    related_evidence = [
+    related_evidence = winner.supporting_evidence or [
         ev for ev in state.evidence_collected
         if ev.get("category") == winner.category
         or winner.label.lower() in str(ev).lower()
     ]
+    if not related_evidence and state.evidence_collected:
+        related_evidence = state.evidence_collected[:5]
 
     return {
         "hypothesis_id": winner.id,
         "label": winner.label,
+        "summary": winner.label,
         "description": winner.description,
+        "causal_explanation": winner.description,
         "category": winner.category,
+        "affected_component": winner.category,
         "severity": winner.severity,
         "confidence": winner.confidence,
         "supporting_evidence": related_evidence[:5],
@@ -369,15 +374,23 @@ def generate_proposed_fixes(root_cause: Optional[Dict], state: InvestigationStat
     fixes = []
     category = root_cause.get("category", "unknown")
 
-    if category == "code_change":
+    # Determine files to modify from root cause evidence or all collected evidence
+    evidence_files = [
+        ev.get("file") for ev in root_cause.get("supporting_evidence", [])
+        if ev.get("file")
+    ]
+    if not evidence_files and state.evidence_collected:
+        evidence_files = [ev.get("file") for ev in state.evidence_collected if ev.get("file")]
+    
+    # Deduplicate while preserving order
+    unique_files = list(dict.fromkeys(evidence_files))[:5]
+
+    if category in ("code_change", "unknown") or not fixes:
         fixes.append({
             "type": "code_fix",
-            "title": f"Fix {root_cause['label'].lower()}",
-            "description": f"Address the root cause identified in {root_cause['label']}",
-            "files_to_modify": [
-                ev.get("file") for ev in root_cause.get("supporting_evidence", [])
-                if ev.get("file")
-            ][:3],
+            "title": f"Fix {root_cause.get('label', root_cause.get('summary', 'issue')).lower()}",
+            "description": f"Address the root cause identified in {root_cause.get('label', root_cause.get('summary', 'the codebase'))}",
+            "files_to_modify": unique_files[:3],
             "approach": "manual",
         })
     elif category == "dependency":

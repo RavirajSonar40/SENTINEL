@@ -110,8 +110,34 @@ async def tool_search_symbol(args: Dict) -> Dict:
 
 
 async def tool_read_file(args: Dict) -> Dict:
-    """Read a file from the workspace."""
+    """Read a file from GitHub or local workspace."""
     file_path = args.get("file_path", "")
+    repository = args.get("repository", "")
+    sha = args.get("sha", "master")
+
+    # Try GitHub first
+    if repository and "/" in repository:
+        try:
+            from app.services.github import GitHubClient
+            from app.core.config import settings
+            client = GitHubClient(token=settings.GITHUB_TOKEN)
+            owner, repo = repository.split("/", 1)
+            content_raw = await client.get_file(owner, repo, file_path, ref=sha)
+            if content_raw and "content" in content_raw:
+                import base64
+                content = base64.b64decode(content_raw["content"]).decode("utf-8", errors="replace")
+            if content:
+                return {
+                    "file_path": file_path,
+                    "content": content[:10000],
+                    "lines": content.count("\n") + 1,
+                    "truncated": len(content) > 10000,
+                    "source": "github",
+                }
+        except Exception as e:
+            pass
+
+    # Fallback to local filesystem
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
@@ -120,6 +146,7 @@ async def tool_read_file(args: Dict) -> Dict:
             "content": content[:10000],
             "lines": content.count("\n") + 1,
             "truncated": len(content) > 10000,
+            "source": "local",
         }
     except FileNotFoundError:
         return {"error": f"File not found: {file_path}"}
@@ -130,14 +157,15 @@ async def tool_read_file(args: Dict) -> Dict:
 async def tool_get_diff(args: Dict) -> Dict:
     """Get diff between commits for a file from GitHub."""
     repo = args.get("repository", "")
-    sha = args.get("sha", "")
+    sha = args.get("sha", "") or args.get("from_commit", "")
     file_path = args.get("file_path", "")
     if not repo or not sha:
         return {"error": "repository and sha required"}
 
     try:
         from app.services.github import GitHubClient
-        client = GitHubClient()
+        from app.core.config import settings
+        client = GitHubClient(token=settings.GITHUB_TOKEN)
         parts = repo.split("/")
         if len(parts) != 2:
             return {"error": f"Invalid repo format: {repo}, expected owner/name"}
@@ -189,12 +217,13 @@ async def tool_get_git_history(args: Dict) -> Dict:
 
     try:
         from app.services.github import GitHubClient
-        client = GitHubClient()
+        from app.core.config import settings
+        client = GitHubClient(token=settings.GITHUB_TOKEN)
         parts = repo.split("/")
         if len(parts) != 2:
             return {"error": f"Invalid repo format: {repo}, expected owner/name"}
         owner, name = parts
-        commits = await client.list_commits(owner, name, path=file_path if file_path else None)
+        commits = await client.list_commits(owner, name)
         return {
             "repo": repo,
             "file_path": file_path,
@@ -375,48 +404,40 @@ Repository: {state.repository or 'Unknown'}"""
 def _generate_default_tasks(state: InvestigationState) -> List[InvestigationTask]:
     """Fallback task generation when LLM fails."""
     tasks = []
+    task_id = 0
+
     tasks.append(InvestigationTask(
-        id="task_0", task_type="search", description="Search codebase for error patterns",
+        id=f"task_{task_id}", task_type="search", description="Search codebase for error patterns",
         tool_name="search_code",
         parameters={"query": f"{state.incident_title} {state.incident_description}", "repository": state.repository, "limit": 15},
     ))
+    task_id += 1
+
     if state.error_signals:
         tasks.append(InvestigationTask(
-            id="task_1", task_type="search", description="Search for specific error messages",
+            id=f"task_{task_id}", task_type="search", description="Search for specific error messages",
             tool_name="search_code",
             parameters={"query": " ".join(state.error_signals[:3]), "repository": state.repository, "limit": 10},
         ))
-    return tasks
+        task_id += 1
 
-    # Read files that were found
-    tasks.append(InvestigationTask(
-        id=f"task_{task_id}",
-        task_type="read",
-        description="Read key files for context",
-        tool_name="read_file",
-        parameters={"file_path": ""},  # Will be filled after search
-    ))
-    task_id += 1
+    keywords = [w for w in state.incident_title.lower().split() if len(w) > 3][:5]
+    if keywords:
+        tasks.append(InvestigationTask(
+            id=f"task_{task_id}", task_type="search", description="Search for related components",
+            tool_name="search_code",
+            parameters={"query": " ".join(keywords), "repository": state.repository, "limit": 10},
+        ))
+        task_id += 1
 
-    # Get git history for relevant files
     tasks.append(InvestigationTask(
-        id=f"task_{task_id}",
-        task_type="history",
-        description="Check recent changes to relevant files",
+        id=f"task_{task_id}", task_type="history", description="Check recent commits",
         tool_name="get_git_history",
-        parameters={"file_path": ""},  # Will be filled after search
+        parameters={"repository": state.repository},
     ))
     task_id += 1
 
-    # Search logs
-    tasks.append(InvestigationTask(
-        id=f"task_{task_id}",
-        task_type="logs",
-        description="Search logs for related errors",
-        tool_name="search_logs",
-        parameters={"query": state.incident_title},
-    ))
-    task_id += 1
+    return tasks
 
     return tasks
 

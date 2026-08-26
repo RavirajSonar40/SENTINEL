@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     PINECONE_API_KEY: str = ""
     PINECONE_INDEX: str = "sentinel"
     CRON_SECRET: str = ""
+    GITHUB_TOKEN: str = ""
 
     LOG_LEVEL: str = "INFO"
 

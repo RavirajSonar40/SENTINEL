@@ -18,6 +18,7 @@ from app.models.incident import (
     Evidence, Hypothesis as HypothesisModel, RootCause,
     ProposedFix, FixFile, User, IncidentStatus, InvestigationStatus,
     TaskStatus, EvidenceSourceType, HypothesisStatus, IncidentSeverity,
+    FixStatus,
 )
 from app.services.investigation_engine import (
     InvestigationState, run_investigation as run_engine,
@@ -201,6 +202,7 @@ async def trigger_investigation(
                 patch = await generate_patch(
                     root_cause,
                     fix.get("files_to_modify", []),
+                    repository=state.repository,
                 )
                 fix_model = ProposedFix(
                     investigation_id=investigation.id,
@@ -213,6 +215,7 @@ async def trigger_investigation(
                     repository=state.repository,
                     diff=format_patch_for_pr(patch),
                     patch_json=patch,
+                    status=FixStatus.APPROVED.value,
                 )
                 db.add(fix_model)
                 db.flush()
@@ -775,8 +778,8 @@ async def get_engine_status(
         "investigation_id": investigation_id,
         "status": investigation.status,
         "confidence": investigation.confidence,
-        "tasks_completed": investigation.tasks_completed,
-        "tasks_failed": investigation.tasks_failed,
+        "tasks_completed": len(evidence),
+        "tasks_failed": 0,
         "evidence_total": len(evidence),
         "evidence_by_source": evidence_by_source,
         "hypotheses_total": len(hypotheses),

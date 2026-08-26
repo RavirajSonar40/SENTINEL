@@ -22,7 +22,8 @@ async def download_file_from_github(
     """Download a file's content from GitHub at a specific commit SHA."""
     try:
         from app.services.github import GitHubClient
-        client = GitHubClient()
+        from app.core.config import settings
+        client = GitHubClient(token=settings.GITHUB_TOKEN)
         result = await client.get_file(owner, repo, file_path, ref=sha)
         if result and "content" in result:
             content = base64.b64decode(result["content"]).decode("utf-8", errors="replace")

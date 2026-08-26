@@ -430,12 +430,16 @@ export default function InvestigationDetail() {
                     <span className="text-[11px] text-on-surface-variant">
                       {streamSteps.length > 0
                         ? streamSteps[streamSteps.length - 1].message
+                        : investigation.completed_at
+                        ? "Investigation complete"
                         : investigation.current_step || "Starting..."}
                     </span>
                     <span className="text-[11px] font-mono text-on-surface">
                       {streamSteps.length > 0
                         ? Math.round((streamSteps.filter(s => s.status === "completed").length / Math.max(streamSteps.length, 1)) * 100)
-                        : investigation.progress_percent}%
+                        : investigation.completed_at
+                        ? 100
+                        : investigation.progress_percent || 0}%
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
@@ -443,7 +447,9 @@ export default function InvestigationDetail() {
                       className="h-full bg-primary rounded-full transition-all duration-500"
                       style={{ width: `${streamSteps.length > 0
                         ? Math.round((streamSteps.filter(s => s.status === "completed").length / Math.max(streamSteps.length, 1)) * 100)
-                        : investigation.progress_percent}%` }}
+                        : investigation.completed_at
+                        ? 100
+                        : investigation.progress_percent || 0}%` }}
                     />
                   </div>
                 </div>
@@ -468,10 +474,35 @@ export default function InvestigationDetail() {
                     </span>
                   )}
                 </div>
+
+                {/* Live streaming steps */}
+                {streamSteps.length > 0 && (
+                  <div className="mt-3 space-y-1 border-t border-surface-container-highest pt-3">
+                    {streamSteps.map((s, i) => (
+                      <div key={`${s.step}-${i}`} className="flex items-start gap-2 py-1">
+                        <div className="mt-0.5 shrink-0">
+                          {s.status === "completed" ? (
+                            <span className="material-symbols-outlined text-[13px] text-green-400">check_circle</span>
+                          ) : s.status === "active" ? (
+                            <span className="material-symbols-outlined animate-spin text-[13px] text-primary">progress_activity</span>
+                          ) : (
+                            <span className="material-symbols-outlined text-[13px] text-on-surface-variant">radio_button_unchecked</span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[11px] text-on-surface">{s.message}</div>
+                          {s.detail && (
+                            <div className="text-[10px] text-on-surface-variant mt-0.5 font-mono truncate">
+                              {typeof s.detail === "string" ? s.detail : Array.isArray(s.detail) ? s.detail.map((d: unknown) => String(typeof d === "string" ? d : typeof d === "object" && d !== null ? ((d as Record<string, unknown>).label || (d as Record<string, unknown>).title || JSON.stringify(d)) : d)).join(", ") : typeof s.detail === "object" && s.detail !== null ? Object.entries(s.detail as Record<string, unknown>).map(([k, v]) => `${k}: ${typeof v === "string" ? v : String(v ?? "")}`).join(" | ") : ""}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
-
-            {/* Hypotheses */}
             {hypotheses.length > 0 && (
               <div className="bg-surface-container-low border border-surface-container-highest rounded p-4">
                 <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant mb-3">

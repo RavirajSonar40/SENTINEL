@@ -1,0 +1,16 @@
+name: Process Background Tasks
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  process-tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Process pending tasks
+        run: |
+          curl.exe -X POST "https://sentinel-1-fr4y.onrender.com/api/v1/tasks/process" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.SECRET_KEY }}"

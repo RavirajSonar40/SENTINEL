@@ -128,6 +128,24 @@ def resolve_repositories(
 
     # Filter by threshold and sort
     results = [c for c in candidates.values() if c.score >= threshold]
+    
+    # If no candidate exceeded threshold, fall back to any matched or connected repositories
+    if not results:
+        if candidates:
+            # Pick highest scoring candidate
+            best = max(candidates.values(), key=lambda c: c.score)
+            results = [best]
+        else:
+            # Fall back to all connected repositories
+            all_repos = db.query(Repository).all()
+            for r in all_repos:
+                results.append(RepositoryCandidate(
+                    repository_id=str(r.id),
+                    repository_full_name=r.full_name,
+                    score=SCORE_THRESHOLD,
+                    reasons=["connected_repository_fallback"],
+                ))
+
     results.sort(key=lambda c: c.score, reverse=True)
 
     logger.info(

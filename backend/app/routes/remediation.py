@@ -213,6 +213,46 @@ def generate_fix_content(
     return {"title": title, "body": body, "files": []}
 
 
+def _resolve_fix_repository(
+    fix: ProposedFix,
+    incident: Incident,
+    investigation: Optional[Investigation],
+    db: Session,
+) -> Optional[str]:
+    """Auto-detect and link repository if not explicitly specified."""
+    if fix.repository and "/" in fix.repository:
+        return fix.repository
+
+    # 1. Check incident scopes
+    if incident.scopes:
+        for scope in incident.scopes:
+            if scope.repository and scope.repository.full_name and "/" in scope.repository.full_name:
+                fix.repository = scope.repository.full_name
+                db.commit()
+                return fix.repository
+
+    # 2. Check investigation evidence
+    if investigation:
+        from app.models.incident import Evidence
+        ev = db.query(Evidence).filter(
+            Evidence.investigation_id == investigation.id,
+            Evidence.repository.isnot(None),
+        ).first()
+        if ev and ev.repository and "/" in ev.repository:
+            fix.repository = ev.repository
+            db.commit()
+            return fix.repository
+
+    # 3. Check connected repositories in DB
+    first_repo = db.query(Repository).first()
+    if first_repo and first_repo.full_name and "/" in first_repo.full_name:
+        fix.repository = first_repo.full_name
+        db.commit()
+        return fix.repository
+
+    return None
+
+
 async def publish_draft_pr(
     fix: ProposedFix,
     incident: Incident,
@@ -220,12 +260,13 @@ async def publish_draft_pr(
     branch_name: Optional[str] = None,
 ) -> PRResponse:
     """Apply an exact generated patch and publish it as a draft PR."""
-    repository_name = fix.repository
-    if not repository_name and incident.scopes:
-        scope = incident.scopes[0]
-        repository_name = scope.repository.full_name if scope and scope.repository else None
+    investigation = db.query(Investigation).filter(
+        Investigation.id == fix.investigation_id
+    ).first()
+
+    repository_name = _resolve_fix_repository(fix, incident, investigation, db)
     if not repository_name or "/" not in repository_name:
-        raise HTTPException(400, "No GitHub repository is linked to this fix")
+        raise HTTPException(400, "No GitHub repository could be auto-linked to this fix")
     repository = db.query(Repository).filter(Repository.full_name == repository_name).first()
     installation = None
     if repository and repository.installation_id:
@@ -415,13 +456,10 @@ async def generate_draft_pr(
         fix.status = FixStatus.APPROVED.value
         db.commit()
 
-    # Fix must have a repository
-    repository_name = fix.repository
-    if not repository_name:
-        scope = incident.scopes[0] if incident.scopes else None
-        repository_name = scope.repository.full_name if scope and scope.repository else None
+    # Fix must have a repository (auto-resolve if not explicitly set)
+    repository_name = _resolve_fix_repository(fix, incident, investigation, db)
     if not repository_name or "/" not in repository_name:
-        raise HTTPException(status_code=400, detail="Fix has no linked repository")
+        raise HTTPException(status_code=400, detail="No GitHub repository could be auto-linked to this fix")
 
     # Fix must have a non-empty exact patch
     patch = fix.patch_json or {}

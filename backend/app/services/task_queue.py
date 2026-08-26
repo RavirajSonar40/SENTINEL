@@ -58,14 +58,19 @@ def _redis_url() -> str:
 
 async def _get_redis():
     global _redis_client
-    if redis is None or not _redis_url():
+    url = _redis_url()
+    if redis is None or not url:
         return None
     if _redis_client is None:
-        _redis_client = redis.from_url(_redis_url(), decode_responses=True)
+        try:
+            _redis_client = redis.from_url(url, decode_responses=True, ssl_cert_reqs=None)
+        except Exception:
+            _redis_client = redis.from_url(url, decode_responses=True)
     try:
         await _redis_client.ping()
         return _redis_client
     except Exception:
+        _redis_client = None
         return None
 
 

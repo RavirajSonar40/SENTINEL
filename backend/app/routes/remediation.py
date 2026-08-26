@@ -410,9 +410,10 @@ async def generate_draft_pr(
     if current_user.role != "admin" and incident.creator_id and str(incident.creator_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Not authorized to create PR for this incident")
 
-    # Fix must be approved or auto-approved
+    # If fix is in generated/proposed status, mark it as approved upon explicit user trigger
     if fix.status not in (FixStatus.APPROVED.value, "approved"):
-        raise HTTPException(status_code=409, detail="Fix must be explicitly approved before creating a draft PR")
+        fix.status = FixStatus.APPROVED.value
+        db.commit()
 
     # Fix must have a repository
     repository_name = fix.repository

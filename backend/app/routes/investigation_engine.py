@@ -207,8 +207,25 @@ async def _stream_investigation(
     def emit(event_type: str, data: dict):
         return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
+    step_pct = 0
+    from app.core.database import SessionLocal
+    from sqlalchemy import text as sql_text
+
+    def _update_progress(step_name: str, pct: int):
+        nonlocal step_pct
+        step_pct = pct
+        try:
+            s = SessionLocal()
+            s.execute(sql_text("UPDATE investigations SET current_step=:s, progress_percent=:p WHERE id=:id"),
+                      {"s": step_name, "p": pct, "id": str(inv_id)})
+            s.commit()
+            s.close()
+        except Exception:
+            pass
+
     try:
         # Step 1: Planning
+        _update_progress("Planning investigation...", 5)
         yield emit("step", {
             "step": "planning",
             "status": "active",
@@ -230,6 +247,7 @@ async def _stream_investigation(
         )
 
         # Step 2: Repository resolution
+        _update_progress("Resolving repository...", 10)
         yield emit("step", {
             "step": "repository",
             "status": "active",
@@ -238,6 +256,7 @@ async def _stream_investigation(
         })
 
         # Step 3: LLM planning
+        _update_progress("AI generating investigation plan...", 20)
         yield emit("step", {
             "step": "llm_planning",
             "status": "active",
@@ -260,6 +279,7 @@ async def _stream_investigation(
         })
 
         # Step 4: Execute search tasks
+        _update_progress("Searching codebase...", 35)
         yield emit("step", {
             "step": "searching",
             "status": "active",
@@ -310,6 +330,7 @@ async def _stream_investigation(
 
         # Step 5: Execute remaining tasks
         if other_tasks:
+            _update_progress("Running deeper analysis...", 50)
             yield emit("step", {
                 "step": "deep_analysis",
                 "status": "active",
@@ -343,6 +364,7 @@ async def _stream_investigation(
             })
 
         # Step 6: Assess confidence
+        _update_progress("Assessing evidence confidence...", 60)
         total = state.tasks_completed + state.tasks_failed
         if total > 0:
             success_rate = state.tasks_completed / total
@@ -362,6 +384,7 @@ async def _stream_investigation(
         })
 
         # Step 7: Generate hypotheses
+        _update_progress("AI generating hypotheses...", 70)
         yield emit("step", {
             "step": "hypotheses",
             "status": "active",
@@ -389,6 +412,7 @@ async def _stream_investigation(
         })
 
         # Step 8: Identify root cause
+        _update_progress("Identifying root cause...", 80)
         yield emit("step", {
             "step": "root_cause",
             "status": "active",
@@ -414,6 +438,7 @@ async def _stream_investigation(
             })
 
             # Step 9: Generate fixes
+            _update_progress("Generating proposed fixes...", 90)
             yield emit("step", {
                 "step": "fixes",
                 "status": "active",
@@ -438,6 +463,7 @@ async def _stream_investigation(
             })
 
         # Persist everything to DB (use fresh session since the route's session is closed)
+        _update_progress("Saving results...", 95)
         from app.core.database import SessionLocal
         from app.models.incident import (
             Evidence as EvidenceModel, Hypothesis as HypothesisModel,
@@ -507,8 +533,8 @@ async def _stream_investigation(
             from sqlalchemy import text
             new_status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
             inc_status = IncidentStatus.ROOT_CAUSE_IDENTIFIED.value if root_cause_found else IncidentStatus.ROOT_CAUSE_ANALYSIS.value
-            persist_db.execute(text("UPDATE investigations SET status=:s, confidence=:c, completed_at=NOW() WHERE id=:id"),
-                               {"s": new_status, "c": state.confidence, "id": str(inv_id)})
+            persist_db.execute(text("UPDATE investigations SET status=:s, confidence=:c, current_step=:step, progress_percent=100, completed_at=NOW() WHERE id=:id"),
+                               {"s": new_status, "c": state.confidence, "step": "Complete", "id": str(inv_id)})
             persist_db.execute(text("UPDATE incidents SET status=:s WHERE id=:id"),
                                {"s": inc_status, "id": str(inc_id)})
             persist_db.commit()

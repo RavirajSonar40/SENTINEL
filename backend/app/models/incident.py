@@ -506,7 +506,9 @@ class ProposedFix(Base):
     validation_strategy = Column(Text, nullable=True)
     status = Column(String(50), default=FixStatus.GENERATED.value)
 
+    repository = Column(String(500), nullable=True)
     diff = Column(Text, nullable=True)
+    patch_json = Column(JSON, nullable=True)
 
     branch_name = Column(String(255), nullable=True)
     pr_number = Column(Integer, nullable=True)

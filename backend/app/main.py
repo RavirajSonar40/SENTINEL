@@ -68,6 +68,8 @@ async def startup_event():
         try:
             conn.execute(text("ALTER TABLE repositories ADD COLUMN IF NOT EXISTS sync_status VARCHAR(50) DEFAULT 'pending'"))
             conn.execute(text("ALTER TABLE repositories ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP WITH TIME ZONE"))
+            conn.execute(text("ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS repository VARCHAR(500)"))
+            conn.execute(text("ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS patch_json JSONB"))
             conn.commit()
         except Exception:
             pass

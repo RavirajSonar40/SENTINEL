@@ -1,5 +1,5 @@
 """Remediation engine — generates draft PRs with fixes."""
-import hashlib
+import base64
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,8 +10,9 @@ from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.models.incident import (
     Incident, Investigation, RootCause, ProposedFix, FixFile,
-    User, IncidentStatus, FixStatus,
+    Repository, GitHubInstallation, User, IncidentStatus, FixStatus,
 )
+from app.services.github import GitHubClient
 
 router = APIRouter()
 
@@ -99,6 +100,7 @@ def generate_fix_content(fix: ProposedFix, root_cause: Optional[RootCause]) -> D
             "files": [],
         }
 
+
     elif fix.fix_type == "dependency_update":
         return {
             "title": f"{template['pr_title_prefix']} update dependencies to fix {fix.title}",
@@ -165,6 +167,74 @@ def generate_fix_content(fix: ProposedFix, root_cause: Optional[RootCause]) -> D
         }
 
 
+async def publish_draft_pr(
+    fix: ProposedFix,
+    incident: Incident,
+    db: Session,
+    branch_name: Optional[str] = None,
+) -> PRResponse:
+    """Apply an exact generated patch and publish it as a draft PR."""
+    repository_name = fix.repository
+    if not repository_name:
+        scope = incident.scopes[0] if incident.scopes else None
+        repository_name = scope.repository.full_name if scope and scope.repository else None
+    if not repository_name or "/" not in repository_name:
+        raise HTTPException(400, "No GitHub repository is linked to this fix")
+
+    repository = db.query(Repository).filter(Repository.full_name == repository_name).first()
+    if not repository or not repository.installation_id:
+        raise HTTPException(400, f"Repository is not connected: {repository_name}")
+    installation = db.query(GitHubInstallation).filter(
+        GitHubInstallation.id == repository.installation_id
+    ).first()
+    if not installation or not installation.tokens_encrypted:
+        raise HTTPException(400, f"No GitHub write token is available for {repository_name}")
+
+    patch = fix.patch_json or {}
+    changes = patch.get("changes", [])
+    if not changes:
+        raise HTTPException(400, "This fix has no applicable code patch to publish")
+
+    owner, repo_name = repository_name.split("/", 1)
+    github = GitHubClient(installation.tokens_encrypted)
+    files = []
+    for change in changes:
+        path = change.get("file")
+        old_code = change.get("old_code", "")
+        new_code = change.get("new_code", "")
+        if not path or change.get("action", "modify") != "modify" or not old_code or not new_code:
+            raise HTTPException(400, f"Patch for {path or 'unknown file'} is not publishable")
+        remote_file = await github.get_file(owner, repo_name, path, repository.default_branch)
+        encoded = remote_file.get("content", "").replace("\n", "")
+        try:
+            remote_content = base64.b64decode(encoded).decode("utf-8")
+        except Exception as exc:
+            raise HTTPException(502, f"Could not decode {path} from GitHub: {exc}")
+        if remote_content.count(old_code) != 1:
+            raise HTTPException(409, f"Patch no longer matches {repository_name}/{path}")
+        files.append({"path": path, "content": remote_content.replace(old_code, new_code, 1)})
+
+    root_cause = db.query(RootCause).filter(RootCause.id == fix.root_cause_id).first()
+    pr_content = generate_fix_content(fix, root_cause)
+    branch = branch_name or generate_branch_name(incident, fix)
+    base_branch = repository.default_branch or "main"
+    await github.create_branch(owner, repo_name, branch, base_branch)
+    commit = await github.create_commit(
+        owner, repo_name, branch, patch.get("commit_message", fix.title), files
+    )
+    pr = await github.create_pull_request(
+        owner, repo_name, pr_content["title"], pr_content["body"], branch, base_branch, draft=True
+    )
+    fix.branch_name = branch
+    fix.pr_number = pr["pr_number"]
+    fix.pr_url = pr["pr_url"]
+    db.commit()
+    return PRResponse(
+        status="created", branch_name=branch, commit_sha=commit.get("commit_sha"),
+        pr_url=pr["pr_url"], message=f"Draft PR created for {repository_name}",
+    )
+
+
 # --- API Endpoints ---
 
 @router.get("/remediation/fixes")
@@ -183,9 +253,15 @@ async def list_fixes(
             "investigation_id": f.investigation_id,
             "root_cause_id": f.root_cause_id,
             "fix_type": f.fix_type,
+            "repository": f.repository,
             "title": f.title,
             "description": f.description,
             "status": f.status,
+            "diff": f.diff,
+            "patch": f.patch_json,
+            "branch_name": f.branch_name,
+            "pr_number": f.pr_number,
+            "pr_url": f.pr_url,
             "created_at": f.generated_at.isoformat() if f.generated_at else None,
         }
         for f in fixes
@@ -217,20 +293,7 @@ async def generate_draft_pr(
         RootCause.investigation_id == request.investigation_id
     ).first()
 
-    # Generate PR content
-    pr_content = generate_fix_content(fix, root_cause)
-    branch_name = request.branch_name or generate_branch_name(incident, fix)
-
-    # Update fix status
-    fix.status = FixStatus.GENERATED.value
-    db.commit()
-
-    return PRResponse(
-        status="generated",
-        branch_name=branch_name,
-        message=f"Draft PR content generated for: {fix.title}",
-        pr_url=None,
-    )
+    return await publish_draft_pr(fix, incident, db, request.branch_name)
 
 
 @router.get("/remediation/pr-config")

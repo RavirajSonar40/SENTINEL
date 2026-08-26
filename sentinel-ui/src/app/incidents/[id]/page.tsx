@@ -12,6 +12,7 @@ import {
   triggerInvestigation, getEngineStatus,
   triggerInvestigationStream, InvestigationStep,
   getRootCause, listFixes, RootCause, ProposedFix,
+  generateDraftPR,
   getInvestigationTimeline, TimelineEvent,
   getRepoCommits, getRepoPRs, getRepoBranches,
 } from "@/lib/api";
@@ -77,6 +78,8 @@ export default function InvestigationDetail() {
   const [streamSteps, setStreamSteps] = useState<InvestigationStep[]>([]);
   const [streamingActive, setStreamingActive] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [prLoading, setPrLoading] = useState<string | null>(null);
+  const [prError, setPrError] = useState<string | null>(null);
 
   const handleFetchGithub = async (type: "commits" | "prs" | "branches") => {
     if (!token || !repos.length) return;
@@ -154,6 +157,21 @@ export default function InvestigationDetail() {
       },
       selectedRepo || undefined,
     );
+  };
+
+  const handleCreateDraftPR = async (fix: ProposedFix) => {
+    if (!token || !investigation) return;
+    setPrLoading(fix.id);
+    setPrError(null);
+    try {
+      await generateDraftPR(token, investigation.id, fix.id);
+      const refreshed = await listFixes(token, investigation.id);
+      setFixes(refreshed);
+    } catch (error) {
+      setPrError(error instanceof Error ? error.message : "Could not create draft PR");
+    } finally {
+      setPrLoading(null);
+    }
   };
 
   useEffect(() => {
@@ -764,8 +782,41 @@ export default function InvestigationDetail() {
                       <p className="text-[11px] text-on-surface-variant ml-6">{fix.description}</p>
                       <div className="flex gap-3 mt-2 ml-6 font-mono text-[10px] text-on-surface-variant">
                         <span>Type: {fix.fix_type}</span>
-                        <span>Approach: {fix.approach}</span>
+                        {fix.repository && <span>Repository: {fix.repository}</span>}
+                        {fix.approach && <span>Approach: {fix.approach}</span>}
                       </div>
+                      {fix.diff && (
+                        <details className="mt-3 ml-6">
+                          <summary className="cursor-pointer text-[11px] text-primary hover:underline">
+                            View proposed code diff
+                          </summary>
+                          <pre className="mt-2 max-h-72 overflow-auto rounded border border-outline-variant bg-surface-container-high p-3 text-[10px] leading-4 text-on-surface whitespace-pre-wrap">
+                            {fix.diff}
+                          </pre>
+                        </details>
+                      )}
+                      {fix.pr_url && (
+                        <a
+                          href={fix.pr_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 ml-6 inline-block text-[11px] text-primary hover:underline"
+                        >
+                          Open pull request #{fix.pr_number}
+                        </a>
+                      )}
+                      {!fix.pr_url && (
+                        <button
+                          onClick={() => handleCreateDraftPR(fix)}
+                          disabled={prLoading === fix.id}
+                          className="mt-2 ml-6 text-[11px] text-primary hover:underline disabled:opacity-50"
+                        >
+                          {prLoading === fix.id ? "Creating draft PR..." : "Create draft PR"}
+                        </button>
+                      )}
+                      {prError && prLoading === null && (
+                        <div className="mt-2 ml-6 text-[11px] text-error">{prError}</div>
+                      )}
                     </div>
                   ))}
                 </div>

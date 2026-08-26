@@ -23,6 +23,7 @@ from app.services.hypothesis_engine import (
     generate_hypotheses, generate_hypotheses_llm, critique_hypotheses,
     identify_root_cause, generate_proposed_fixes,
 )
+from app.services.diff_generator import generate_patch, format_patch_for_pr
 
 router = APIRouter()
 
@@ -154,6 +155,10 @@ async def trigger_investigation(
         # Generate proposed fixes
         fixes = generate_proposed_fixes(root_cause, state)
         for fix in fixes[:3]:
+            patch = await generate_patch(
+                root_cause,
+                fix.get("files_to_modify", []),
+            )
             fix_model = ProposedFix(
                 investigation_id=investigation.id,
                 root_cause_id=rc.id,
@@ -162,6 +167,9 @@ async def trigger_investigation(
                 title=fix.get("title", "Proposed Fix"),
                 description=fix.get("description", ""),
                 proposed_change=fix.get("description", ""),
+                repository=state.repository,
+                diff=format_patch_for_pr(patch),
+                patch_json=patch,
             )
             db.add(fix_model)
             db.flush()
@@ -237,12 +245,18 @@ async def _stream_investigation(
             InvestigationState, run_investigation as run_engine,
         )
 
+        linked_repositories = [
+            scope.repository.full_name
+            for scope in inc_scopes
+            if getattr(scope, "repository", None)
+        ]
+        repositories = [repo_name] if repo_name else linked_repositories
         state = InvestigationState(
             incident_id=str(inc_id),
             incident_title=inc_title,
             incident_description=inc_desc,
             error_signals=[inc_sig] if inc_sig else [],
-            repository=repo_name,
+            repository=repositories[0] if repositories else None,
             service=request_service or inc_service,
         )
 
@@ -252,7 +266,7 @@ async def _stream_investigation(
             "step": "repository",
             "status": "active",
             "message": f"Resolving repository..." if repo_name else "No repository linked — will search across all indexed code",
-            "detail": repo_name or "Auto-detect from error patterns",
+            "detail": ", ".join(repositories) if repositories else "Auto-detect from error patterns",
         })
 
         # Step 3: LLM planning
@@ -291,13 +305,30 @@ async def _stream_investigation(
         search_tasks = [t for t in tasks if t.task_type in ("search", "symbol", "code", "logs")]
         other_tasks = [t for t in tasks if t.task_type not in ("search", "symbol", "code", "logs")]
 
+        search_pairs = [
+            (task, repository)
+            for task in search_tasks
+            for repository in (repositories or [None])
+        ]
+        search_work = [
+            execute_task(
+                type(task)(
+                    id=f"{task.id}_{(repository or 'all').replace('/', '_')}",
+                    task_type=task.task_type,
+                    description=task.description,
+                    tool_name=task.tool_name,
+                    parameters={**task.parameters, "repository": repository},
+                )
+            )
+            for task, repository in search_pairs
+        ]
         search_results = await asyncio.gather(
-            *[execute_task(t) for t in search_tasks],
+            *search_work,
             return_exceptions=True,
         )
 
         # Collect evidence from search results
-        for task, result in zip(search_tasks, search_results):
+        for (task, repository), result in zip(search_pairs, search_results):
             if isinstance(result, Exception):
                 state.tasks_failed += 1
                 state.error_log.append(f"Task {task.id} failed: {result}")
@@ -313,6 +344,7 @@ async def _stream_investigation(
                             "type": item.get("type"),
                             "score": item.get("score"),
                             "content_preview": item.get("content_preview", "")[:500],
+                            "repository": repository,
                         })
 
         evidence_files = list(set(e.get("file", "") for e in state.evidence_collected if e.get("file")))
@@ -446,7 +478,23 @@ async def _stream_investigation(
                 "detail": "Creating remediation plan",
             })
 
-            fixes = generate_proposed_fixes(root_cause, state)
+            fixes = []
+            for repository in repositories or [None]:
+                repository_state = InvestigationState(
+                    incident_id=state.incident_id,
+                    incident_title=state.incident_title,
+                    incident_description=state.incident_description,
+                    error_signals=state.error_signals,
+                    repository=repository,
+                    service=state.service,
+                    evidence_collected=[
+                        evidence for evidence in state.evidence_collected
+                        if not repository or repository in str(evidence.get("repository", ""))
+                    ],
+                )
+                for fix in generate_proposed_fixes(root_cause, repository_state):
+                    fix["repository"] = repository
+                    fixes.append(fix)
             fix_summary = [{"title": f.get("title"), "type": f.get("type")} for f in fixes]
             yield emit("step", {
                 "step": "fixes",
@@ -472,6 +520,8 @@ async def _stream_investigation(
         )
 
         persist_db = SessionLocal()
+        saved_fixes = []
+        published_prs = []
         try:
             for ev_data in state.evidence_collected[:20]:
                 evidence = EvidenceModel(
@@ -515,6 +565,10 @@ async def _stream_investigation(
                 persist_db.flush()
 
                 for fix in fixes[:3]:
+                    patch = await generate_patch(
+                        root_cause,
+                        fix.get("files_to_modify", []),
+                    )
                     fix_model = ProposedFix(
                         investigation_id=inv_id,
                         root_cause_id=rc.id,
@@ -523,11 +577,24 @@ async def _stream_investigation(
                         title=fix.get("title", "Proposed Fix"),
                         description=fix.get("description", ""),
                         proposed_change=fix.get("description", ""),
+                        repository=fix.get("repository") or repo_name,
+                        diff=format_patch_for_pr(patch),
+                        patch_json=patch,
                     )
                     persist_db.add(fix_model)
                     persist_db.flush()
+                    saved_fixes.append(fix_model)
                     for file_path in fix.get("files_to_modify", [])[:5]:
-                        fix_file = FixFile(fix_id=fix_model.id, file_path=file_path, change_type="modify")
+                        change = next(
+                            (item for item in patch.get("changes", []) if item.get("file") == file_path),
+                            {},
+                        )
+                        fix_file = FixFile(
+                            fix_id=fix_model.id,
+                            file_path=file_path,
+                            change_type=change.get("action", "modify"),
+                            patch=(change.get("new_code") or None),
+                        )
                         persist_db.add(fix_file)
 
             investigation_record = persist_db.query(Investigation).filter(
@@ -552,6 +619,22 @@ async def _stream_investigation(
                 if root_cause_found else IncidentStatus.ROOT_CAUSE_ANALYSIS
             )
             persist_db.commit()
+
+            # Publish guarded draft PRs for every repository-specific fix.
+            from app.routes.remediation import publish_draft_pr
+            for fix_model in saved_fixes:
+                try:
+                    pr_result = await publish_draft_pr(fix_model, incident_record, persist_db)
+                    published_prs.append({
+                        "repository": fix_model.repository,
+                        "pr_url": pr_result.pr_url,
+                        "pr_number": fix_model.pr_number,
+                    })
+                except Exception as pr_error:
+                    published_prs.append({
+                        "repository": fix_model.repository,
+                        "error": str(pr_error.detail if isinstance(pr_error, HTTPException) else pr_error),
+                    })
         except Exception as persist_err:
             try:
                 persist_db.rollback()
@@ -571,6 +654,7 @@ async def _stream_investigation(
             "hypotheses_count": len(hypotheses),
             "tasks_completed": state.tasks_completed,
             "tasks_failed": state.tasks_failed,
+            "pull_requests": published_prs,
         })
 
     except Exception as e:

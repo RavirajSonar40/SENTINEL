@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import asyncio
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException, Header, Depends
@@ -15,6 +16,11 @@ from app.models.incident import (
 )
 
 router = APIRouter()
+
+
+def _schedule_investigation(incident: Incident):
+    from app.routes.auto_detect import _run_auto_investigation
+    asyncio.create_task(_run_auto_investigation(str(incident.id)))
 
 
 # --- Alert Schemas ---
@@ -322,6 +328,7 @@ async def receive_pagerduty(request: Request, db: Session = Depends(get_db)):
     payload = await request.json()
     alert = normalize_pagerduty(payload)
     incident = create_incident_from_alert(alert, db)
+    _schedule_investigation(incident)
     return {"status": "ok", "incident_id": incident.id}
 
 
@@ -331,6 +338,7 @@ async def receive_datadog(request: Request, db: Session = Depends(get_db)):
     payload = await request.json()
     alert = normalize_datadog(payload)
     incident = create_incident_from_alert(alert, db)
+    _schedule_investigation(incident)
     return {"status": "ok", "incident_id": incident.id}
 
 
@@ -340,6 +348,7 @@ async def receive_sentry(request: Request, db: Session = Depends(get_db)):
     payload = await request.json()
     alert = normalize_sentry(payload)
     incident = create_incident_from_alert(alert, db)
+    _schedule_investigation(incident)
     return {"status": "ok", "incident_id": incident.id}
 
 
@@ -349,6 +358,7 @@ async def receive_slack(request: Request, db: Session = Depends(get_db)):
     payload = await request.json()
     alert = normalize_slack(payload)
     incident = create_incident_from_alert(alert, db)
+    _schedule_investigation(incident)
     return {"status": "ok", "incident_id": incident.id}
 
 
@@ -371,6 +381,7 @@ async def receive_generic(request: Request, db: Session = Depends(get_db)):
     normalizer = NORMALIZERS.get(source, normalize_generic)
     alert = normalizer(payload)
     incident = create_incident_from_alert(alert, db)
+    _schedule_investigation(incident)
     return {"status": "ok", "incident_id": incident.id, "source_detected": source}
 
 

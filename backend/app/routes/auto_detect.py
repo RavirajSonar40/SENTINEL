@@ -1,5 +1,6 @@
 """Auto-detection engine — creates incidents from error spikes, patterns, and anomalies."""
 import re
+import asyncio
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
@@ -133,6 +134,51 @@ DEFAULT_RULES = [
 ]
 
 
+async def _run_auto_investigation(incident_id: str):
+    """Run the same streamed investigation used by the manual UI flow."""
+    from app.core.database import SessionLocal
+    from app.models.incident import Incident, Investigation
+    from app.routes.investigation_engine import _stream_investigation
+
+    db = SessionLocal()
+    try:
+        incident = db.query(Incident).filter(Incident.id == incident_id).first()
+        if not incident:
+            return
+        investigation = db.query(Investigation).filter(
+            Investigation.incident_id == incident.id
+        ).first()
+        if not investigation:
+            from datetime import datetime, timezone
+            from app.models.incident import IncidentStatus, InvestigationStatus
+            investigation = Investigation(
+                incident_id=incident.id,
+                status=InvestigationStatus.PLANNING,
+                confidence="low",
+                started_at=datetime.now(timezone.utc),
+            )
+            db.add(investigation)
+            incident.status = IncidentStatus.INVESTIGATING
+            db.commit()
+        db.refresh(incident)
+        db.refresh(investigation)
+        stream = _stream_investigation(
+            incident.id,
+            investigation.id,
+            incident.title or "Unknown",
+            incident.description or "",
+            incident.error_signature,
+            list(incident.scopes) if incident.scopes else [],
+            incident.service_name,
+            None,
+            incident.service_name,
+        )
+        async for _ in stream:
+            pass
+    finally:
+        db.close()
+
+
 # --- Detection Engine ---
 
 def evaluate_rules(context: Dict, rules: List[DetectionRule] = None) -> List[Dict]:
@@ -228,6 +274,8 @@ async def run_detection(
 
     if triggered:
         incident = auto_create_incident(triggered, service_name, db)
+        if incident:
+            asyncio.create_task(_run_auto_investigation(str(incident.id)))
 
     return {
         "service": service_name,

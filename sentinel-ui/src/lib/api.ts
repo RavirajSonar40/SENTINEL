@@ -380,6 +380,12 @@ export interface ProposedFix {
   description: string;
   approach: string;
   status: string;
+  repository?: string | null;
+  diff?: string | null;
+  patch?: Record<string, unknown> | null;
+  branch_name?: string | null;
+  pr_number?: number | null;
+  pr_url?: string | null;
   created_at: string | null;
 }
 

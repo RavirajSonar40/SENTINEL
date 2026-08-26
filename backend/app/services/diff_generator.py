@@ -18,12 +18,12 @@ async def download_file_from_github(
     repo: str,
     file_path: str,
     sha: Optional[str] = None,
+    token: Optional[str] = None,
 ) -> Optional[str]:
     """Download a file's content from GitHub at a specific commit SHA."""
     try:
         from app.services.github import GitHubClient
-        from app.core.config import settings
-        client = GitHubClient(token=settings.GITHUB_TOKEN)
+        client = GitHubClient(token=token)
         result = await client.get_file(owner, repo, file_path, ref=sha)
         if result and "content" in result:
             content = base64.b64decode(result["content"]).decode("utf-8", errors="replace")
@@ -62,6 +62,7 @@ async def generate_patch(
     repository: Optional[str] = None,
     sha: Optional[str] = None,
     project_path: str = ".",
+    token: Optional[str] = None,
 ) -> Dict:
     """Generate a code patch based on root cause analysis.
 
@@ -109,7 +110,7 @@ Rules:
     for fpath in affected_files[:5]:
         content = None
         if owner and repo and sha:
-            content = await download_file_from_github(owner, repo, fpath, sha)
+            content = await download_file_from_github(owner, repo, fpath, sha, token=token)
         if content is None:
             full_path = os.path.join(project_path, fpath)
             try:

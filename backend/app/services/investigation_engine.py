@@ -34,6 +34,7 @@ class InvestigationState:
     confidence: str = "low"
     abort_reason: Optional[str] = None
     error_log: List[str] = field(default_factory=list)
+    github_token: Optional[str] = None
 
 
 @dataclass
@@ -114,13 +115,13 @@ async def tool_read_file(args: Dict) -> Dict:
     file_path = args.get("file_path", "")
     repository = args.get("repository", "")
     sha = args.get("sha", "master")
+    github_token = args.get("_github_token")
 
     # Try GitHub first
     if repository and "/" in repository:
         try:
             from app.services.github import GitHubClient
-            from app.core.config import settings
-            client = GitHubClient(token=settings.GITHUB_TOKEN)
+            client = GitHubClient(token=github_token)
             owner, repo = repository.split("/", 1)
             content_raw = await client.get_file(owner, repo, file_path, ref=sha)
             if content_raw and "content" in content_raw:
@@ -159,13 +160,13 @@ async def tool_get_diff(args: Dict) -> Dict:
     repo = args.get("repository", "")
     sha = args.get("sha", "") or args.get("from_commit", "")
     file_path = args.get("file_path", "")
+    github_token = args.get("_github_token")
     if not repo or not sha:
         return {"error": "repository and sha required"}
 
     try:
         from app.services.github import GitHubClient
-        from app.core.config import settings
-        client = GitHubClient(token=settings.GITHUB_TOKEN)
+        client = GitHubClient(token=github_token)
         parts = repo.split("/")
         if len(parts) != 2:
             return {"error": f"Invalid repo format: {repo}, expected owner/name"}
@@ -212,13 +213,13 @@ async def tool_get_git_history(args: Dict) -> Dict:
     """Get recent git history for a file from GitHub."""
     repo = args.get("repository", "")
     file_path = args.get("file_path", "")
+    github_token = args.get("_github_token")
     if not repo:
         return {"error": "repository required"}
 
     try:
         from app.services.github import GitHubClient
-        from app.core.config import settings
-        client = GitHubClient(token=settings.GITHUB_TOKEN)
+        client = GitHubClient(token=github_token)
         parts = repo.split("/")
         if len(parts) != 2:
             return {"error": f"Invalid repo format: {repo}, expected owner/name"}
@@ -473,7 +474,7 @@ async def execute_task(task: InvestigationTask) -> Dict:
     return {"error": task.error}
 
 
-async def run_investigation(state: InvestigationState, db=None, investigation_id=None) -> InvestigationState:
+async def run_investigation(state: InvestigationState, db=None, investigation_id=None, github_token: str = None) -> InvestigationState:
     """Run a full investigation from planning through execution.
 
     When db and investigation_id are provided, each task is persisted to the
@@ -485,6 +486,13 @@ async def run_investigation(state: InvestigationState, db=None, investigation_id
 
     # 1. Plan tasks (LLM-powered)
     tasks = await generate_tasks_llm(state)
+
+    # Inject user's GitHub token into tool parameters for GitHub-dependent tools
+    if github_token:
+        state.github_token = github_token
+        for task in tasks:
+            if task.tool_name in ("read_file", "get_git_history", "get_diff", "search_code"):
+                task.parameters["_github_token"] = github_token
 
     # Persist planned tasks to DB
     db_task_map = {}  # in-memory task id -> DB row

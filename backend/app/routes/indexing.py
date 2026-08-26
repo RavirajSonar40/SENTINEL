@@ -71,12 +71,11 @@ def _scan_directory(local_path: str, extensions: List[str] = None) -> Dict[str, 
     return files
 
 
-async def _scan_github_repo(repository: str, branch: str = "main") -> Dict[str, str]:
+async def _scan_github_repo(repository: str, branch: str = "main", github_token: str = None) -> Dict[str, str]:
     """Scan a GitHub repository and read all matching source files."""
     import logging
     logger = logging.getLogger("sentinel.indexing")
     from app.services.github import GitHubClient
-    from app.core.config import settings
 
     files = {}
     skip_dirs = ["node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build", "vendor"]
@@ -85,12 +84,11 @@ async def _scan_github_repo(repository: str, branch: str = "main") -> Dict[str, 
         logger.warning(f"Invalid repository format: {repository}")
         return files
 
-    token = settings.GITHUB_TOKEN
-    if not token:
-        logger.warning("GITHUB_TOKEN not set — cannot index GitHub repository")
+    if not github_token:
+        logger.warning("No GitHub token — cannot index GitHub repository")
         return files
 
-    client = GitHubClient(token=token)
+    client = GitHubClient(token=github_token)
     owner, repo = repository.split("/", 1)
 
     # Get repo tree recursively
@@ -179,8 +177,13 @@ async def index_repository(
         # Index from local filesystem
         files = _scan_directory(request.local_path)
     elif request.repository and "/" in request.repository:
-        # Index from GitHub repository
-        files = await _scan_github_repo(request.repository)
+        # Index from GitHub repository — get user's token
+        from app.models.incident import GitHubInstallation
+        installation = db.query(GitHubInstallation).filter(
+            GitHubInstallation.account_login == current_user.username,
+        ).first()
+        user_token = installation.tokens_encrypted if installation else None
+        files = await _scan_github_repo(request.repository, github_token=user_token)
     elif request.file_paths:
         # Index specific files
         for fp in request.file_paths:

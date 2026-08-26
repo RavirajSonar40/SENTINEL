@@ -32,6 +32,17 @@ from app.services.diff_generator import generate_patch, format_patch_for_pr
 router = APIRouter()
 
 
+def _get_user_github_token(user: User, db: Session) -> Optional[str]:
+    """Get the GitHub token for the authenticated user from their connected installation."""
+    from app.models.incident import GitHubInstallation
+    installation = db.query(GitHubInstallation).filter(
+        GitHubInstallation.account_login == user.username,
+    ).first()
+    if installation and installation.tokens_encrypted:
+        return installation.tokens_encrypted
+    return None
+
+
 class InvestigateRequest(BaseModel):
     incident_id: str
     repository: Optional[str] = None
@@ -135,8 +146,11 @@ async def trigger_investigation(
             service=request.service or incident.service_name,
         )
 
+        # Get user's GitHub token
+        user_token = _get_user_github_token(current_user, db)
+
         # Run investigation engine
-        state = await run_engine(state, db=db, investigation_id=investigation.id)
+        state = await run_engine(state, db=db, investigation_id=investigation.id, github_token=user_token)
 
         # Persist evidence
         evidence_count = 0
@@ -203,6 +217,7 @@ async def trigger_investigation(
                     root_cause,
                     fix.get("files_to_modify", []),
                     repository=state.repository,
+                    token=state.github_token,
                 )
                 fix_model = ProposedFix(
                     investigation_id=investigation.id,
@@ -259,7 +274,7 @@ async def trigger_investigation(
 
 
 async def _stream_investigation(
-    inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request_service,
+    inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request_service, github_token=None,
 ) -> AsyncGenerator[str, None]:
     """Generator that yields SSE events during investigation."""
     def emit(event_type: str, data: dict):
@@ -611,6 +626,7 @@ async def _stream_investigation(
                     patch = await generate_patch(
                         root_cause,
                         fix.get("files_to_modify", []),
+                        token=github_token,
                     )
                     fix_model = ProposedFix(
                         investigation_id=inv_id,
@@ -744,8 +760,9 @@ async def trigger_investigation_stream(
     inc_id = incident.id
 
     repo_name = request.repository
+    user_token = _get_user_github_token(current_user, db)
     return StreamingResponse(
-        _stream_investigation(inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request.service),
+        _stream_investigation(inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request.service, github_token=user_token),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

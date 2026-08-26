@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import { useAuth } from "@/lib/AuthContext";
 import {
-  getIncident, getInvestigation, listEvidence, listHypotheses,
+  getIncident, updateIncident, deleteIncident, getInvestigation, listEvidence, listHypotheses,
   Incident, Investigation, Evidence, Hypothesis,
   listRepositories, Repository,
   triggerInvestigation, getEngineStatus,
@@ -61,6 +61,7 @@ const evidenceSourceIcons: Record<string, string> = {
 export default function InvestigationDetail() {
   const { token } = useAuth();
   const params = useParams();
+  const router = useRouter();
   const [incident, setIncident] = useState<Incident | null>(null);
   const [investigation, setInvestigation] = useState<Investigation | null>(null);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
@@ -80,6 +81,13 @@ export default function InvestigationDetail() {
   const [streamError, setStreamError] = useState<string | null>(null);
   const [prLoading, setPrLoading] = useState<string | null>(null);
   const [prError, setPrError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editService, setEditService] = useState("");
+  const [editSeverity, setEditSeverity] = useState("");
+  const [editDescription, setEditDescription] = useState("");
 
   const handleFetchGithub = async (type: "commits" | "prs" | "branches") => {
     if (!token || !repos.length) return;
@@ -181,6 +189,10 @@ export default function InvestigationDetail() {
     getIncident(token, id)
       .then((inc) => {
         setIncident(inc);
+        setEditTitle(inc.title);
+        setEditService(inc.service || "");
+        setEditSeverity(inc.severity);
+        setEditDescription(inc.description || "");
         if (inc.investigation) {
           getInvestigation(token, inc.investigation.id).then(setInvestigation).catch(() => {});
           listEvidence(token, inc.investigation.id).then(setEvidence).catch(() => {});
@@ -195,6 +207,38 @@ export default function InvestigationDetail() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [token, params.id]);
+
+  const handleSaveIncident = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!token || !incident) return;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const updated = await updateIncident(token, incident.id, {
+        title: editTitle,
+        service: editService,
+        severity: editSeverity,
+        description: editDescription,
+      });
+      setIncident(updated);
+      setEditing(false);
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : "Could not update incident");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleDeleteIncident = async () => {
+    if (!token || !incident) return;
+    if (!window.confirm(`Delete INC-${incident.number}? This cannot be undone.`)) return;
+    try {
+      await deleteIncident(token, incident.id);
+      router.push("/incidents");
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : "Could not delete incident");
+    }
+  };
 
   if (loading) {
     return (
@@ -233,15 +277,39 @@ export default function InvestigationDetail() {
           <div className="w-[300px] flex-shrink-0 flex flex-col gap-1">
             <div className="bg-surface-container-low border border-surface-container-highest rounded p-4">
               <div className="flex items-center justify-between mb-4 border-b border-outline-variant pb-2">
-                <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
-                  Incident Summary
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                    Incident Summary
+                  </h2>
+                  <button type="button" title="Edit incident" onClick={() => setEditing(true)} className="text-on-surface-variant hover:text-primary">
+                    <span className="material-symbols-outlined text-[15px]">edit</span>
+                  </button>
+                  <button type="button" title="Delete incident" onClick={handleDeleteIncident} className="text-on-surface-variant hover:text-error">
+                    <span className="material-symbols-outlined text-[15px]">delete</span>
+                  </button>
+                </div>
                 <span className={`px-1.5 py-0.5 rounded font-mono text-[11px] border ${
                   severityStyles[incident.severity] || ""
                 }`}>
                   {incident.severity}
                 </span>
               </div>
+
+              {editing && (
+                <form onSubmit={handleSaveIncident} className="mt-3 bg-surface-container border border-outline-variant rounded p-3 space-y-2">
+                  <input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} placeholder="Title" required className="w-full bg-surface-container-high border border-outline-variant rounded px-2 py-1.5 text-[11px] text-on-surface" />
+                  <input value={editService} onChange={(event) => setEditService(event.target.value)} placeholder="Service" required className="w-full bg-surface-container-high border border-outline-variant rounded px-2 py-1.5 text-[11px] text-on-surface" />
+                  <select value={editSeverity} onChange={(event) => setEditSeverity(event.target.value)} className="w-full bg-surface-container-high border border-outline-variant rounded px-2 py-1.5 text-[11px] text-on-surface">
+                    {['SEV-1', 'SEV-2', 'SEV-3', 'SEV-4'].map((severity) => <option key={severity}>{severity}</option>)}
+                  </select>
+                  <textarea value={editDescription} onChange={(event) => setEditDescription(event.target.value)} rows={4} placeholder="Description" className="w-full bg-surface-container-high border border-outline-variant rounded px-2 py-1.5 text-[11px] text-on-surface" />
+                  {editError && <div className="text-[11px] text-error">{editError}</div>}
+                  <div className="flex gap-2 justify-end">
+                    <button type="button" onClick={() => setEditing(false)} className="px-2 py-1 text-[11px] text-on-surface-variant">Cancel</button>
+                    <button type="submit" disabled={editSaving} className="px-2 py-1 rounded bg-primary text-on-primary text-[11px] disabled:opacity-50">{editSaving ? "Saving..." : "Save"}</button>
+                  </div>
+                </form>
+              )}
               <div className="space-y-3 font-mono text-[11px]">
                 <div className="flex justify-between">
                   <span className="text-on-surface-variant">ID</span>

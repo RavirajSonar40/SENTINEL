@@ -174,6 +174,20 @@ def update_incident(
     return _incident_to_out(incident, db)
 
 
+@router.delete("/{incident_id}", status_code=204)
+def delete_incident(
+    incident_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete an incident and its cascaded investigation records."""
+    incident = db.query(Incident).filter(Incident.id == UUID(incident_id)).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    db.delete(incident)
+    db.commit()
+
 @router.post("/{incident_id}/investigate")
 def start_investigation(
     incident_id: str,

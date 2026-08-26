@@ -140,6 +140,10 @@ export async function updateIncident(
   });
 }
 
+export async function deleteIncident(token: string, id: string): Promise<void> {
+  await request<void>(`/incidents/${id}`, { method: "DELETE", token });
+}
+
 export async function startInvestigation(token: string, incidentId: string): Promise<{ investigation_id: string; status: string }> {
   return request(`/incidents/${incidentId}/investigate`, {
     method: "POST",

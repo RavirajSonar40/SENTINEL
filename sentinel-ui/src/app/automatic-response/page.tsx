@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import { useAuth } from "@/lib/AuthContext";
@@ -11,6 +11,7 @@ export default function AutomaticResponsePage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [now] = useState(() => Date.now());
 
   useEffect(() => {
     if (!token) return;
@@ -19,16 +20,15 @@ export default function AutomaticResponsePage() {
       listAlertRules(token).catch(() => []),
     ]).then(([inc, rls]) => {
       setIncidents(inc);
-      setRules(Array.isArray(rls) ? rls : (rls as any)?.rules || []);
+      setRules(Array.isArray(rls) ? rls : []);
     }).finally(() => setLoading(false));
   }, [token]);
 
   const activeRules = rules.filter((r) => r.enabled);
-  const recentIncidents = incidents.filter((i) => {
-    const created = new Date(i.created_at);
-    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    return created > dayAgo;
-  });
+  const recentIncidents = useMemo(() => {
+    const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
+    return incidents.filter((i) => new Date(i.created_at) > dayAgo);
+  }, [incidents, now]);
   const autoDetected = incidents.filter((i) => i.source === "webhook");
 
   return (

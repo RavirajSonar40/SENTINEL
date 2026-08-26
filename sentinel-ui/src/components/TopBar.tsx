@@ -70,11 +70,8 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
   }, [showSearch]);
 
   useEffect(() => {
-    if (!showSearch || !searchQuery.trim() || !token) {
-      setSearchResults([]);
-      return;
-    }
-    setSearchLoading(true);
+    if (!showSearch || !searchQuery.trim() || !token) return;
+    let cancelled = false;
     const timeout = setTimeout(() => {
       Promise.all([
         fetch(`${API_BASE}/incidents?search=${encodeURIComponent(searchQuery)}`, {
@@ -96,10 +93,15 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
           results.push({ title: s.service_name, href: `/health`, type: "Service" });
         });
         setSearchResults(results);
-        setSearchLoading(false);
+        if (!cancelled) setSearchLoading(false);
       });
     }, 300);
-    return () => clearTimeout(timeout);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+      setSearchResults([]);
+      setSearchLoading(false);
+    };
   }, [searchQuery, token, showSearch]);
 
   return (

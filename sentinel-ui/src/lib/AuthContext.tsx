@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { login as apiLogin, register as apiRegister } from "@/lib/api";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
@@ -26,24 +26,21 @@ function clearAuth() {
   localStorage.removeItem("sentinel_username");
 }
 
+function getInitialAuth(): AuthState {
+  if (typeof window === "undefined") return { token: null, userId: null, username: null, isLoading: true };
+  const token = localStorage.getItem("sentinel_token");
+  const userId = localStorage.getItem("sentinel_user_id");
+  const username = localStorage.getItem("sentinel_username");
+  if (!token || !userId || !username) return { token: null, userId: null, username: null, isLoading: false };
+  return { token, userId, username, isLoading: true };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AuthState>({
-    token: null,
-    userId: null,
-    username: null,
-    isLoading: true,
-  });
+  const [state, setState] = useState<AuthState>(getInitialAuth);
 
   useEffect(() => {
-    const token = localStorage.getItem("sentinel_token");
-    const userId = localStorage.getItem("sentinel_user_id");
-    const username = localStorage.getItem("sentinel_username");
-
-    if (!token || !userId || !username) {
-      clearAuth();
-      setState({ token: null, userId: null, username: null, isLoading: false });
-      return;
-    }
+    const { token } = state;
+    if (!token) return;
 
     fetch(`${API_BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -61,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearAuth();
         setState({ token: null, userId: null, username: null, isLoading: false });
       });
-  }, []);
+  }, [state.token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const login = async (username: string, password: string) => {
     const res = await apiLogin(username, password);

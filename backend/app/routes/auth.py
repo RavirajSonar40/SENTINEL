@@ -109,6 +109,17 @@ def update_user(user_id: str, payload: UserUpdate, current_user: User = Depends(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Non-admins can only update their own email
+    if current_user.role != "admin" and str(current_user.id) != str(user_id):
+        raise HTTPException(status_code=403, detail="Not authorized to update this user")
+
+    # Only admins can change roles and active status
+    if payload.role and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can change user roles")
+    if payload.is_active is not None and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can change user active status")
+
     if payload.email:
         user.email = payload.email
     if payload.role:

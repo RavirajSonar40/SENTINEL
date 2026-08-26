@@ -22,7 +22,10 @@ export default function ChatBot() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [position, setPosition] = useState(() => ({
+    x: typeof window !== "undefined" ? window.innerWidth - 420 : 800,
+    y: typeof window !== "undefined" ? window.innerHeight - 620 : 400,
+  }));
   const [size, setSize] = useState({ w: 400, h: 560 });
   const [isMaximized, setIsMaximized] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -33,10 +36,6 @@ export default function ChatBot() {
   const windowRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    setPosition({ x: window.innerWidth - 420, y: window.innerHeight - 620 });
-  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

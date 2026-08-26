@@ -437,53 +437,56 @@ async def _stream_investigation(
                 "detail": "Confidence insufficient — more evidence needed",
             })
 
-        # Persist everything to DB
+        # Persist everything to DB (use fresh session since the route's session is closed)
+        from app.core.database import SessionLocal
         from app.models.incident import (
             Evidence as EvidenceModel, Hypothesis as HypothesisModel,
             RootCause, ProposedFix, FixFile, IncidentStatus, InvestigationStatus,
             EvidenceSourceType, HypothesisStatus, IncidentSeverity,
         )
 
-        for ev_data in state.evidence_collected[:20]:
-            evidence = EvidenceModel(
-                investigation_id=investigation.id,
-                incident_id=incident.id,
-                source_type=EvidenceSourceType.COMMIT.value if "code" in ev_data.get("source", "") else EvidenceSourceType.FILE.value,
-                title=f"{ev_data.get('symbol', ev_data.get('file', 'Unknown'))}",
-                summary=ev_data.get("content_preview", "")[:500],
-                repository=ev_data.get("file", "").split("/")[0] if ev_data.get("file") else None,
-                file_path=ev_data.get("file"),
-                source_id=ev_data.get("symbol"),
-                relevance_score=ev_data.get("score", 0.5),
-            )
-            db.add(evidence)
+        persist_db = SessionLocal()
+        try:
+            for ev_data in state.evidence_collected[:20]:
+                evidence = EvidenceModel(
+                    investigation_id=investigation.id,
+                    incident_id=incident.id,
+                    source_type=EvidenceSourceType.COMMIT.value if "code" in ev_data.get("source", "") else EvidenceSourceType.FILE.value,
+                    title=f"{ev_data.get('symbol', ev_data.get('file', 'Unknown'))}",
+                    summary=ev_data.get("content_preview", "")[:500],
+                    repository=ev_data.get("file", "").split("/")[0] if ev_data.get("file") else None,
+                    file_path=ev_data.get("file"),
+                    source_id=ev_data.get("symbol"),
+                    relevance_score=ev_data.get("score", 0.5),
+                )
+                persist_db.add(evidence)
 
-        for h in hypotheses[:10]:
-            hyp_model = HypothesisModel(
-                investigation_id=investigation.id,
-                incident_id=incident.id,
-                label=h.label,
-                description=h.description,
-                confidence=h.confidence,
-                status=HypothesisStatus.SUPPORTED.value if h.status == "supported" else HypothesisStatus.PROPOSED.value,
-                supporting_evidence_count=h.supporting_count,
-                contradicting_evidence_count=h.contradicting_count,
-                rejection_reason=h.rejection_reason,
-            )
-            db.add(hyp_model)
+            for h in hypotheses[:10]:
+                hyp_model = HypothesisModel(
+                    investigation_id=investigation.id,
+                    incident_id=incident.id,
+                    label=h.label,
+                    description=h.description,
+                    confidence=h.confidence,
+                    status=HypothesisStatus.SUPPORTED.value if h.status == "supported" else HypothesisStatus.PROPOSED.value,
+                    supporting_evidence_count=h.supporting_count,
+                    contradicting_evidence_count=h.contradicting_count,
+                    rejection_reason=h.rejection_reason,
+                )
+                persist_db.add(hyp_model)
 
-        rc = None
-        if root_cause:
-            rc = RootCause(
-                investigation_id=investigation.id,
-                incident_id=incident.id,
+            rc = None
+            if root_cause:
+                rc = RootCause(
+                    investigation_id=investigation.id,
+                    incident_id=incident.id,
                 summary=root_cause.get("label", "Root Cause"),
                 causal_explanation=root_cause.get("description", ""),
                 confidence=root_cause.get("confidence", "medium"),
                 affected_component=root_cause.get("category", "unknown"),
             )
-            db.add(rc)
-            db.flush()
+            persist_db.add(rc)
+            persist_db.flush()
 
             for fix in fixes[:3]:
                 fix_model = ProposedFix(
@@ -495,18 +498,26 @@ async def _stream_investigation(
                     description=fix.get("description", ""),
                     proposed_change=fix.get("description", ""),
                 )
-                db.add(fix_model)
-                db.flush()
+                persist_db.add(fix_model)
+                persist_db.flush()
                 for file_path in fix.get("files_to_modify", [])[:5]:
                     fix_file = FixFile(fix_id=fix_model.id, file_path=file_path, change_type="modify")
-                    db.add(fix_file)
+                    persist_db.add(fix_file)
 
-        investigation.status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
-        investigation.confidence = state.confidence
-        investigation.completed_at = datetime.now(timezone.utc)
-        incident.status = IncidentStatus.ROOT_CAUSE_IDENTIFIED.value if root_cause_found else IncidentStatus.ROOT_CAUSE_ANALYSIS.value
+            investigation.status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
+            investigation.confidence = state.confidence
+            investigation.completed_at = datetime.now(timezone.utc)
+            incident.status = IncidentStatus.ROOT_CAUSE_IDENTIFIED.value if root_cause_found else IncidentStatus.ROOT_CAUSE_ANALYSIS.value
 
-        db.commit()
+            persist_db.commit()
+        except Exception as persist_err:
+            try:
+                persist_db.rollback()
+            except Exception:
+                pass
+            raise persist_err
+        finally:
+            persist_db.close()
 
         # Final event
         yield emit("complete", {
@@ -523,10 +534,6 @@ async def _stream_investigation(
     except Exception as e:
         try:
             yield emit("error", {"message": str(e)[:500]})
-        except Exception:
-            pass
-        try:
-            db.rollback()
         except Exception:
             pass
 
@@ -554,7 +561,9 @@ async def trigger_investigation_stream(
         )
         db.add(investigation)
         db.flush()
+        db.commit()
         incident.status = IncidentStatus.INVESTIGATING.value
+        db.commit()
 
     repo_name = request.repository
     if not repo_name and incident.scopes:

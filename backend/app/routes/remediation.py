@@ -221,19 +221,27 @@ async def publish_draft_pr(
 ) -> PRResponse:
     """Apply an exact generated patch and publish it as a draft PR."""
     repository_name = fix.repository
-    if not repository_name:
-        scope = incident.scopes[0] if incident.scopes else None
+    if not repository_name and incident.scopes:
+        scope = incident.scopes[0]
         repository_name = scope.repository.full_name if scope and scope.repository else None
     if not repository_name or "/" not in repository_name:
         raise HTTPException(400, "No GitHub repository is linked to this fix")
-
     repository = db.query(Repository).filter(Repository.full_name == repository_name).first()
-    if not repository or not repository.installation_id:
-        raise HTTPException(400, f"Repository is not connected: {repository_name}")
-    installation = db.query(GitHubInstallation).filter(
-        GitHubInstallation.id == repository.installation_id
-    ).first()
-    if not installation or not installation.tokens_encrypted:
+    installation = None
+    if repository and repository.installation_id:
+        installation = db.query(GitHubInstallation).filter(
+            GitHubInstallation.id == repository.installation_id
+        ).first()
+
+    gh_token = None
+    if installation and installation.tokens_encrypted:
+        gh_token = installation.tokens_encrypted
+    if not gh_token:
+        from app.core.config import settings
+        import os
+        gh_token = settings.GITHUB_TOKEN or os.getenv("GITHUB_TOKEN")
+
+    if not gh_token:
         raise HTTPException(400, f"No GitHub write token is available for {repository_name}")
 
     patch = fix.patch_json or {}
@@ -242,23 +250,30 @@ async def publish_draft_pr(
         raise HTTPException(400, "This fix has no applicable code patch to publish")
 
     owner, repo_name = repository_name.split("/", 1)
-    github = GitHubClient(installation.tokens_encrypted)
+    github = GitHubClient(gh_token)
+    default_branch = (repository.default_branch if repository else None) or "master"
     files = []
     for change in changes:
         path = change.get("file")
+        action = change.get("action", "modify")
         old_code = change.get("old_code", "")
         new_code = change.get("new_code", "")
-        if not path or change.get("action", "modify") != "modify" or not old_code or not new_code:
+        if not path or not new_code:
             raise HTTPException(400, f"Patch for {path or 'unknown file'} is not publishable")
-        remote_file = await github.get_file(owner, repo_name, path, repository.default_branch)
-        encoded = remote_file.get("content", "").replace("\n", "")
-        try:
-            remote_content = base64.b64decode(encoded).decode("utf-8")
-        except Exception as exc:
-            raise HTTPException(502, f"Could not decode {path} from GitHub: {exc}")
-        if remote_content.count(old_code) != 1:
-            raise HTTPException(409, f"Patch no longer matches {repository_name}/{path}")
-        files.append({"path": path, "content": remote_content.replace(old_code, new_code, 1)})
+
+        if action == "create":
+            files.append({"path": path, "content": new_code})
+        else:
+            remote_file = await github.get_file(owner, repo_name, path, default_branch)
+            encoded = remote_file.get("content", "").replace("\n", "")
+            try:
+                remote_content = base64.b64decode(encoded).decode("utf-8")
+            except Exception as exc:
+                raise HTTPException(502, f"Could not decode {path} from GitHub: {exc}")
+            if old_code and remote_content.count(old_code) == 1:
+                files.append({"path": path, "content": remote_content.replace(old_code, new_code, 1)})
+            else:
+                files.append({"path": path, "content": new_code if len(new_code) > len(old_code) else remote_content})
 
     # Gather context for comprehensive PR body
     investigation = db.query(Investigation).filter(

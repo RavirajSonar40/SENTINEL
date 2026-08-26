@@ -1,11 +1,127 @@
-"""Validation engine — run lint, tests, build checks on proposed fixes."""
+"""Validation engine — run lint, tests, build checks on proposed fixes.
+
+Includes workspace isolation: creates temp directory, applies patches,
+runs validation in an isolated environment.
+"""
 import asyncio
 import os
+import shutil
 import subprocess
 import json
+import tempfile
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import logging
+
+logger = logging.getLogger("sentinel.validation")
+
+
+# ============================================================================
+# Workspace Isolation
+# ============================================================================
+
+async def create_workspace(
+    repository: str,
+    sha: str,
+    token: Optional[str] = None,
+) -> Optional[str]:
+    """Create an isolated workspace by shallow-cloning a repo at a specific SHA.
+
+    Returns the workspace path, or None on failure.
+    """
+    workspace = tempfile.mkdtemp(prefix="sentinel_fix_")
+    try:
+        clone_url = f"https://github.com/{repository}.git"
+        if token:
+            clone_url = f"https://{token}@github.com/{repository}.git"
+
+        proc = await asyncio.create_subprocess_shell(
+            f"git clone --depth 50 --single-branch {clone_url} {workspace}/repo",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+
+        if proc.returncode != 0:
+            logger.warning(f"Clone failed: {stderr.decode(errors='replace')[:200]}")
+            os.makedirs(f"{workspace}/repo", exist_ok=True)
+            return workspace
+
+        proc2 = await asyncio.create_subprocess_shell(
+            f"git checkout {sha}",
+            cwd=f"{workspace}/repo",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(proc2.communicate(), timeout=30)
+
+        return workspace
+    except Exception as e:
+        logger.warning(f"Workspace creation failed: {e}")
+        shutil.rmtree(workspace, ignore_errors=True)
+        return None
+
+
+async def apply_patches_to_workspace(
+    workspace: str,
+    changes: List[Dict],
+) -> bool:
+    """Apply verified patches to the workspace.
+
+    Each change must have file, old_code, new_code.
+    Returns True if all patches applied successfully.
+    """
+    repo_dir = f"{workspace}/repo"
+    if not os.path.isdir(repo_dir):
+        repo_dir = workspace
+
+    all_ok = True
+    for change in changes:
+        fpath = change.get("file", "")
+        old_code = change.get("old_code", "")
+        new_code = change.get("new_code", "")
+
+        if not old_code or not new_code:
+            continue
+
+        full_path = os.path.join(repo_dir, fpath)
+        try:
+            with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except FileNotFoundError:
+            logger.warning(f"File not found in workspace: {fpath}")
+            all_ok = False
+            continue
+
+        count = content.count(old_code)
+        if count != 1:
+            logger.warning(f"Unsafe patch for {fpath}: appears {count} times")
+            all_ok = False
+            continue
+
+        new_content = content.replace(old_code, new_code, 1)
+        try:
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except Exception as e:
+            logger.warning(f"Failed to write {fpath}: {e}")
+            all_ok = False
+
+    return all_ok
+
+
+def cleanup_workspace(workspace: str):
+    """Remove an isolated workspace."""
+    try:
+        shutil.rmtree(workspace, ignore_errors=True)
+    except Exception:
+        pass
+
+
+# ============================================================================
+# Validation Checks
+# ============================================================================
 
 
 @dataclass
@@ -235,3 +351,65 @@ async def run_validation(
     report.completed_at = datetime.now(timezone.utc).isoformat()
 
     return report
+
+
+async def validate_fix_in_workspace(
+    repository: str,
+    sha: str,
+    changes: List[Dict],
+    language: str = "python",
+    checks: Optional[List[str]] = None,
+    token: Optional[str] = None,
+) -> ValidationReport:
+    """Full validation pipeline: create workspace, apply patches, run checks.
+
+    This is the entry point for Phase 4 validation.
+    """
+    fix_id = f"ws-{repository.replace('/', '-')}-{sha[:8]}"
+
+    # 1. Create isolated workspace
+    workspace = await create_workspace(repository, sha, token)
+    if not workspace:
+        return ValidationReport(
+            fix_id=fix_id,
+            status="error",
+            started_at=datetime.now(timezone.utc).isoformat(),
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            results=[ValidationResult(
+                check_type="workspace",
+                status="error",
+                message="Failed to create isolated workspace",
+            )],
+            total_checks=1,
+            failed_checks=1,
+        )
+
+    try:
+        # 2. Apply patches
+        applied = await apply_patches_to_workspace(workspace, changes)
+        if not applied:
+            return ValidationReport(
+                fix_id=fix_id,
+                status="failed",
+                started_at=datetime.now(timezone.utc).isoformat(),
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                results=[ValidationResult(
+                    check_type="patch",
+                    status="failed",
+                    message="Failed to apply patches to workspace",
+                )],
+                total_checks=1,
+                failed_checks=1,
+            )
+
+        # 3. Determine project path
+        project_path = f"{workspace}/repo"
+        if not os.path.isdir(project_path):
+            project_path = workspace
+
+        # 4. Run validation checks
+        report = await run_validation(fix_id, project_path, language, checks)
+        return report
+    finally:
+        # 5. Cleanup
+        cleanup_workspace(workspace)

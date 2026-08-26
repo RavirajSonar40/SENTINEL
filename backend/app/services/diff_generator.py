@@ -1,18 +1,73 @@
-"""Diff generation — create actual code patches from root cause analysis."""
+"""Diff generation — create actual code patches from root cause analysis.
+
+Downloads files from GitHub at a specific SHA, generates precise diffs,
+and verifies replacement safety (exact count must be exactly 1).
+"""
+import base64
 import os
 import re
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone
+import logging
 
-from app.services.llm import generate_text
+logger = logging.getLogger("sentinel.diff_generator")
+
+
+async def download_file_from_github(
+    owner: str,
+    repo: str,
+    file_path: str,
+    sha: Optional[str] = None,
+) -> Optional[str]:
+    """Download a file's content from GitHub at a specific commit SHA."""
+    try:
+        from app.services.github import GitHubClient
+        client = GitHubClient()
+        result = await client.get_file(owner, repo, file_path, ref=sha)
+        if result and "content" in result:
+            content = base64.b64decode(result["content"]).decode("utf-8", errors="replace")
+            return content
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to download {file_path} from GitHub: {e}")
+        return None
+
+
+def verify_replacement_count(old_code: str, file_content: str) -> Tuple[bool, int]:
+    """Verify that old_code appears exactly once in the file.
+
+    Returns (is_safe, count). Patch is safe only if count == 1.
+    """
+    if not old_code or not old_code.strip():
+        return False, 0
+    count = file_content.count(old_code)
+    return count == 1, count
+
+
+def apply_replacement(file_content: str, old_code: str, new_code: str) -> Optional[str]:
+    """Apply a single replacement to file content.
+
+    Returns None if old_code doesn't appear exactly once.
+    """
+    is_safe, count = verify_replacement_count(old_code, file_content)
+    if not is_safe:
+        return None
+    return file_content.replace(old_code, new_code, 1)
 
 
 async def generate_patch(
     root_cause: Dict,
     affected_files: List[str],
+    repository: Optional[str] = None,
+    sha: Optional[str] = None,
     project_path: str = ".",
 ) -> Dict:
-    """Generate a code patch based on root cause analysis."""
+    """Generate a code patch based on root cause analysis.
+
+    If repository and sha are provided, downloads files from GitHub.
+    Otherwise falls back to local files.
+    Verifies each replacement appears exactly once before accepting.
+    """
     system_prompt = """You are a code remediation expert. Given a root cause and affected files, generate a precise code patch.
 
 Respond with JSON:
@@ -35,20 +90,39 @@ Respond with JSON:
 }
 
 Rules:
-- Be precise — match exact code from the file
+- old_code must be EXACT text from the file (copy-paste precisely)
+- Each old_code block must appear exactly ONCE in the file
+- Be precise — match exact code including whitespace
 - Minimal changes — fix only what's broken
 - Preserve existing code style
 - Include error handling if the fix touches error paths
 - Don't refactor unrelated code"""
 
+    # Download or read file contents
     files_context = []
+    file_contents = {}
+    owner, repo = None, None
+    if repository and "/" in repository:
+        owner, repo = repository.split("/", 1)
+
     for fpath in affected_files[:5]:
-        full_path = os.path.join(project_path, fpath)
-        try:
-            with open(full_path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read(10000)
-            files_context.append(f"FILE: {fpath}\n```\n{content}\n```")
-        except FileNotFoundError:
+        content = None
+        if owner and repo and sha:
+            content = await download_file_from_github(owner, repo, fpath, sha)
+        if content is None:
+            full_path = os.path.join(project_path, fpath)
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read(10000)
+            except FileNotFoundError:
+                content = None
+
+        if content:
+            file_contents[fpath] = content
+            # Truncate for LLM context but keep enough for accurate matching
+            display = content[:8000]
+            files_context.append(f"FILE: {fpath}\n```\n{display}\n```")
+        else:
             files_context.append(f"FILE: {fpath}\n[NOT FOUND]")
 
     user_prompt = f"""Root Cause: {root_cause.get('summary', 'Unknown')}
@@ -58,32 +132,78 @@ Affected Component: {root_cause.get('affected_component', 'Unknown')}
 Relevant Files:
 {chr(10).join(files_context)}
 
-Generate the minimal fix for this root cause."""
+Generate the minimal fix for this root cause. old_code must be an EXACT copy of code from the file above."""
 
     try:
         from app.services.llm import generate_json
         result = await generate_json(system_prompt, user_prompt)
-        return result
     except Exception as e:
-        # Fallback: generate a basic patch structure
-        return {
+        logger.warning(f"LLM patch generation failed: {e}")
+        result = {
             "summary": f"Fix for: {root_cause.get('summary', 'Unknown issue')}",
-            "changes": [
-                {
-                    "file": f,
-                    "action": "modify",
-                    "description": f"Apply fix for root cause: {root_cause.get('summary', '')}",
-                    "old_code": "",
-                    "new_code": "",
-                    "line_start": 0,
-                    "line_end": 0,
-                }
-                for f in affected_files[:3]
-            ],
+            "changes": [],
             "commit_message": f"fix: {root_cause.get('summary', 'resolve incident')[:72]}",
             "risk": "medium",
             "risk_explanation": "Generated by AI — requires human review",
         }
+
+    # Verify each change's replacement count
+    verified_changes = []
+    rejected_changes = []
+    for change in result.get("changes", []):
+        fpath = change.get("file", "")
+        old_code = change.get("old_code", "")
+        new_code = change.get("new_code", "")
+
+        if not old_code or not new_code:
+            rejected_changes.append({**change, "rejection_reason": "empty old_code or new_code"})
+            continue
+
+        file_content = file_contents.get(fpath, "")
+        if not file_content:
+            # Can't verify — might be a new file
+            if change.get("action") == "create":
+                verified_changes.append(change)
+            else:
+                rejected_changes.append({**change, "rejection_reason": "file not available for verification"})
+            continue
+
+        is_safe, count = verify_replacement_count(old_code, file_content)
+        if is_safe:
+            # Build the actual patched content for diff generation
+            patched = apply_replacement(file_content, old_code, new_code)
+            change["patched_content"] = patched
+            change["original_content"] = file_content
+            verified_changes.append(change)
+        else:
+            rejected_changes.append({
+                **change,
+                "rejection_reason": f"unsafe: old_code appears {count} times (must be exactly 1)",
+            })
+            logger.warning(f"Rejected patch for {fpath}: old_code appears {count} times")
+
+    # Build diffs for verified changes
+    diffs = []
+    for change in verified_changes:
+        old = change.get("original_content", "")
+        new = change.get("patched_content", "")
+        if old and new:
+            diff = generate_diff(old, new, change.get("file", ""))
+            change["diff"] = diff
+            diffs.append(diff)
+        change.pop("original_content", None)
+        change.pop("patched_content", None)
+
+    result["changes"] = verified_changes
+    result["rejected_changes"] = rejected_changes
+    result["diffs"] = diffs
+    result["safe"] = len(rejected_changes) == 0 and len(verified_changes) > 0
+
+    if not result["safe"] and verified_changes:
+        result["risk"] = "high"
+        result["risk_explanation"] = f"{len(rejected_changes)} changes rejected as unsafe"
+
+    return result
 
 
 def generate_diff(old_code: str, new_code: str, file_path: str) -> str:
@@ -93,7 +213,6 @@ def generate_diff(old_code: str, new_code: str, file_path: str) -> str:
 
     diff_lines = [f"--- a/{file_path}\n", f"+++ b/{file_path}\n"]
 
-    # Simple line-by-line diff
     max_len = max(len(old_lines), len(new_lines))
     for i in range(max_len):
         old_line = old_lines[i] if i < len(old_lines) else None
@@ -125,9 +244,19 @@ def format_patch_for_pr(patch: Dict) -> str:
             sections.append(f"### `{change.get('file', 'unknown')}`\n")
             sections.append(f"**Action:** {change.get('action', 'modify')}\n")
             sections.append(f"**Description:** {change.get('description', '')}\n")
-            if change.get("old_code") and change.get("new_code"):
+            if change.get("diff"):
+                sections.append("```diff")
+                sections.append(change["diff"])
+                sections.append("```\n")
+            elif change.get("old_code") and change.get("new_code"):
                 sections.append("```diff")
                 sections.append(generate_diff(change["old_code"], change["new_code"], change.get("file", "")))
                 sections.append("```\n")
+
+    rejected = patch.get("rejected_changes", [])
+    if rejected:
+        sections.append("## Rejected Changes\n")
+        for r in rejected:
+            sections.append(f"- `{r.get('file', '?')}`: {r.get('rejection_reason', 'unknown')}\n")
 
     return "\n".join(sections)

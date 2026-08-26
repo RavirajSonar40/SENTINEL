@@ -177,10 +177,11 @@ async def index_repository(
         # Index from local filesystem
         files = _scan_directory(request.local_path)
     elif request.repository and "/" in request.repository:
-        # Index from GitHub repository — get user's token
+        # Index from GitHub repository — get user's token by repo owner
         from app.models.incident import GitHubInstallation
+        repo_owner = request.repository.split("/")[0]
         installation = db.query(GitHubInstallation).filter(
-            GitHubInstallation.account_login == current_user.username,
+            GitHubInstallation.account_login == repo_owner,
         ).first()
         user_token = installation.tokens_encrypted if installation else None
         files = await _scan_github_repo(request.repository, github_token=user_token)

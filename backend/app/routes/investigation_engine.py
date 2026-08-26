@@ -32,12 +32,19 @@ from app.services.diff_generator import generate_patch, format_patch_for_pr
 router = APIRouter()
 
 
-def _get_user_github_token(user: User, db: Session) -> Optional[str]:
+def _get_user_github_token(user: User, db: Session, repository: str = None) -> Optional[str]:
     """Get the GitHub token for the authenticated user from their connected installation."""
     from app.models.incident import GitHubInstallation
-    installation = db.query(GitHubInstallation).filter(
-        GitHubInstallation.account_login == user.username,
-    ).first()
+    # Try lookup by repo owner first (most reliable)
+    if repository and "/" in repository:
+        repo_owner = repository.split("/")[0]
+        installation = db.query(GitHubInstallation).filter(
+            GitHubInstallation.account_login == repo_owner,
+        ).first()
+        if installation and installation.tokens_encrypted:
+            return installation.tokens_encrypted
+    # Fallback: get the most recent installation
+    installation = db.query(GitHubInstallation).order_by(GitHubInstallation.updated_at.desc()).first()
     if installation and installation.tokens_encrypted:
         return installation.tokens_encrypted
     return None
@@ -147,7 +154,7 @@ async def trigger_investigation(
         )
 
         # Get user's GitHub token
-        user_token = _get_user_github_token(current_user, db)
+        user_token = _get_user_github_token(current_user, db, repository=repo_name)
 
         # Run investigation engine
         state = await run_engine(state, db=db, investigation_id=investigation.id, github_token=user_token)
@@ -760,7 +767,7 @@ async def trigger_investigation_stream(
     inc_id = incident.id
 
     repo_name = request.repository
-    user_token = _get_user_github_token(current_user, db)
+    user_token = _get_user_github_token(current_user, db, repository=repo_name)
     return StreamingResponse(
         _stream_investigation(inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request.service, github_token=user_token),
         media_type="text/event-stream",

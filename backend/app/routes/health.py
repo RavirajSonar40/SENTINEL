@@ -38,7 +38,11 @@ def readiness_check(db: Session = Depends(get_db)):
     if settings.REDIS_URL:
         try:
             import redis.asyncio as aioredis
-            r = aioredis.from_url(settings.REDIS_URL, socket_timeout=2)
+            url = settings.REDIS_URL
+            if url.startswith("rediss://"):
+                r = aioredis.from_url(url, socket_timeout=2, ssl_cert_reqs=None)
+            else:
+                r = aioredis.from_url(url, socket_timeout=2)
             import asyncio
             asyncio.get_event_loop().run_until_complete(r.ping())
             checks["redis"] = "ok"

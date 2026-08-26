@@ -192,11 +192,17 @@ def get_system_health(current_user: User = Depends(get_current_user)):
 
     # Redis
     try:
-        import httpx
-        resp = httpx.get(settings.REDIS_URL or "http://localhost:6379", timeout=3)
+        import redis.asyncio as aioredis
+        url = settings.REDIS_URL
+        if url.startswith("rediss://"):
+            r = aioredis.from_url(url, socket_timeout=2, ssl_cert_reqs=None)
+        else:
+            r = aioredis.from_url(url, socket_timeout=2)
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(r.ping())
         checks["redis"] = {"status": "operational"}
-    except Exception:
-        checks["redis"] = {"status": "error", "error": "Connection refused"}
+    except Exception as e:
+        checks["redis"] = {"status": "error", "error": str(e)}
 
     # LLM
     from app.services.llm import get_config

@@ -269,6 +269,9 @@ def identify_root_cause(
         supported = [h for h in hypotheses if h.status != "rejected"]
 
     if not supported:
+        supported = hypotheses[:1]
+
+    if not supported:
         return None  # Abstain
 
     # Pick highest confidence

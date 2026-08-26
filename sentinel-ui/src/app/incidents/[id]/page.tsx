@@ -428,16 +428,22 @@ export default function InvestigationDetail() {
                 <div className="mb-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[11px] text-on-surface-variant">
-                      {investigation.current_step || "Starting..."}
+                      {streamSteps.length > 0
+                        ? streamSteps[streamSteps.length - 1].message
+                        : investigation.current_step || "Starting..."}
                     </span>
                     <span className="text-[11px] font-mono text-on-surface">
-                      {investigation.progress_percent}%
+                      {streamSteps.length > 0
+                        ? Math.round((streamSteps.filter(s => s.status === "completed").length / Math.max(streamSteps.length, 1)) * 100)
+                        : investigation.progress_percent}%
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
                     <div
                       className="h-full bg-primary rounded-full transition-all duration-500"
-                      style={{ width: `${investigation.progress_percent}%` }}
+                      style={{ width: `${streamSteps.length > 0
+                        ? Math.round((streamSteps.filter(s => s.status === "completed").length / Math.max(streamSteps.length, 1)) * 100)
+                        : investigation.progress_percent}%` }}
                     />
                   </div>
                 </div>

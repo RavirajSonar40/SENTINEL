@@ -1,4 +1,4 @@
-"""Repository indexing — parse files, generate embeddings, index into Qdrant."""
+"""Repository indexing — parse files, generate embeddings, index into Pinecone/Qdrant."""
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -71,6 +71,59 @@ def _scan_directory(local_path: str, extensions: List[str] = None) -> Dict[str, 
     return files
 
 
+async def _scan_github_repo(repository: str, branch: str = "main") -> Dict[str, str]:
+    """Scan a GitHub repository and read all matching source files."""
+    from app.services.github import GitHubClient
+    from app.core.config import settings
+
+    files = {}
+    extensions = ["*.py", "*.js", "*.ts", "*.tsx", "*.jsx", "*.go", "*.rs", "*.java"]
+    skip_dirs = ["node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build", "vendor"]
+
+    if "/" not in repository:
+        return files
+
+    client = GitHubClient(token=settings.GITHUB_TOKEN)
+    owner, repo = repository.split("/", 1)
+
+    # Get repo tree recursively
+    try:
+        tree_resp = await client._client().get(f"/repos/{owner}/{repo}/git/trees/{branch}?recursive=1")
+        if tree_resp.status_code != 200:
+            return files
+        tree = tree_resp.json()
+        for item in tree.get("tree", []):
+            if item["type"] != "blob":
+                continue
+            path = item["path"]
+            # Check skip dirs
+            if any(sd in path.split("/") for sd in skip_dirs):
+                continue
+            # Check extension
+            ext = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
+            if ext not in (".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".json", ".yaml", ".yml", ".toml", ".md"):
+                continue
+            # Skip very large files (likely not code)
+            if item.get("size", 0) > 500000:
+                continue
+            # Read file content
+            try:
+                file_resp = await client._client().get(f"/repos/{owner}/{repo}/contents/{path}?ref={branch}")
+                if file_resp.status_code == 200:
+                    file_data = file_resp.json()
+                    if file_data.get("encoding") == "base64":
+                        import base64
+                        content = base64.b64decode(file_data["content"]).decode("utf-8", errors="replace")
+                        if len(content) > 10:
+                            files[path] = content
+            except Exception:
+                continue
+    except Exception as e:
+        pass
+
+    return files
+
+
 async def _index_files(
     files: Dict[str, str],
     repository: str = "",
@@ -118,6 +171,9 @@ async def index_repository(
     if request.local_path:
         # Index from local filesystem
         files = _scan_directory(request.local_path)
+    elif request.repository and "/" in request.repository:
+        # Index from GitHub repository
+        files = await _scan_github_repo(request.repository)
     elif request.file_paths:
         # Index specific files
         for fp in request.file_paths:
@@ -130,7 +186,7 @@ async def index_repository(
             status="warning",
             files_indexed=0,
             chunks_indexed=0,
-            message="No files found to index. Provide a local_path or file_paths.",
+            message="No files found to index. Provide local_path, repository (owner/repo), or file_paths.",
         )
 
     # Index files

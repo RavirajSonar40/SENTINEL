@@ -10,7 +10,7 @@ logger = logging.getLogger("sentinel.tasks")
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
-CRON_SECRET = settings.SECRET_KEY
+CRON_SECRET = settings.CRON_SECRET
 
 
 @router.post("/process")

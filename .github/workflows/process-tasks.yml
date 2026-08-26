@@ -13,4 +13,4 @@ jobs:
         run: |
           curl.exe -X POST "https://sentinel-1-fr4y.onrender.com/api/v1/tasks/process" \
             -H "Content-Type: application/json" \
-            -H "x-cron-secret: ${{ secrets.SECRET_KEY }}"
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"

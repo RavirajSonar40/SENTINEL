@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     QDRANT_URL: str = "http://localhost:6333"
     PINECONE_API_KEY: str = ""
     PINECONE_INDEX: str = "sentinel"
+    CRON_SECRET: str = ""
 
     LOG_LEVEL: str = "INFO"
 

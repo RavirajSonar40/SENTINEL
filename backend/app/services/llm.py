@@ -240,6 +240,22 @@ async def _call_mock(config: LLMConfig, messages: List[LLMMessage]) -> LLMRespon
                 {"tool": "search_logs", "description": "Search logs for the specific error message", "priority": 5},
             ]
         }, indent=2)
+    elif any(k in last_msg.lower() for k in ("patch", "fix", "old_code", "changes", "minimal fix")):
+        content = json.dumps({
+            "summary": "Standardize Sentinel logo component across application views",
+            "commit_message": "fix: standardize Sentinel logo component across pages",
+            "risk": "low",
+            "risk_explanation": "Replaces inconsistent logo elements with canonical Logo component",
+            "changes": [
+                {
+                    "file": "sentinel-ui/src/components/Sidebar.tsx",
+                    "action": "modify",
+                    "description": "Use canonical Logo component in Sidebar",
+                    "old_code": '<img\n            src="/sentinel_logo.png"\n            alt="Sentinel"\n            className="w-5 h-5 object-contain"\n\n          />',
+                    "new_code": '<Logo size="md" href="/" />',
+                }
+            ]
+        }, indent=2)
     else:
         content = "I'll help you investigate this incident. Based on the error signals and codebase analysis, I recommend starting with a semantic search of the codebase to identify potential root causes."
 

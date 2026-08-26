@@ -1,20 +1,20 @@
-"""Add investigation_id, fix_type, status to proposed_fixes; add FixStatus enum."""
+"""Add fix metadata columns to proposed fixes."""
 from alembic import op
 import sqlalchemy as sa
 
 revision = "016_add_fix_fields"
-down_revision = "015_seed_data"
+down_revision = "015_baseline"
 branch_labels = None
 depends_on = None
 
 
 def upgrade():
-    op.add_column("proposed_fixes", sa.Column("investigation_id", sa.dialects.postgresql.UUID(), sa.ForeignKey("investigations.id"), nullable=True))
-    op.add_column("proposed_fixes", sa.Column("fix_type", sa.String(100), nullable=True))
-    op.add_column("proposed_fixes", sa.Column("status", sa.String(50), server_default="generated"))
+    op.execute("ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS investigation_id UUID REFERENCES investigations(id)")
+    op.execute("ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS fix_type VARCHAR(100)")
+    op.execute("ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'generated'")
 
 
 def downgrade():
-    op.drop_column("proposed_fixes", "status")
-    op.drop_column("proposed_fixes", "fix_type")
-    op.drop_column("proposed_fixes", "investigation_id")
+    op.execute("ALTER TABLE proposed_fixes DROP COLUMN IF EXISTS status")
+    op.execute("ALTER TABLE proposed_fixes DROP COLUMN IF EXISTS fix_type")
+    op.execute("ALTER TABLE proposed_fixes DROP COLUMN IF EXISTS investigation_id")

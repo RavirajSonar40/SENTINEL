@@ -10,10 +10,10 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column("proposed_fixes", sa.Column("repository", sa.String(500), nullable=True))
-    op.add_column("proposed_fixes", sa.Column("patch_json", sa.JSON(), nullable=True))
+    op.execute("ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS repository VARCHAR(500)")
+    op.execute("ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS patch_json JSONB")
 
 
 def downgrade():
-    op.drop_column("proposed_fixes", "patch_json")
-    op.drop_column("proposed_fixes", "repository")
+    op.execute("ALTER TABLE proposed_fixes DROP COLUMN IF EXISTS patch_json")
+    op.execute("ALTER TABLE proposed_fixes DROP COLUMN IF EXISTS repository")

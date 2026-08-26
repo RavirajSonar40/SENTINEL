@@ -9,6 +9,9 @@ from uuid import UUID
 import httpx
 import hmac
 import hashlib
+import logging
+
+logger = logging.getLogger("sentinel.github")
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
@@ -227,8 +230,8 @@ async def github_callback(code: str, iss: Optional[str] = None, db: Session = De
             )
             if resp.status_code == 200:
                 installations = resp.json().get("installations", [])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to fetch GitHub installations: {e}")
 
     # Store installation(s)
     for inst in installations:

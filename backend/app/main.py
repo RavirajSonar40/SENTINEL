@@ -4,6 +4,9 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 import os
+import logging
+
+logger = logging.getLogger("sentinel.startup")
 
 from app.core.database import engine, Base
 from app.core.rate_limit import limiter
@@ -79,6 +82,6 @@ async def startup_event():
             max_num = conn.execute(text("SELECT COALESCE(MAX(number), 0) FROM incidents")).scalar()
             conn.execute(text(f"CREATE SEQUENCE IF NOT EXISTS incident_number_seq START WITH {max_num + 1}"))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Startup schema migration skipped: {e}")
     start_workers()

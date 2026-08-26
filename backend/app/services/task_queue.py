@@ -30,6 +30,7 @@ class BackgroundTask:
     payload: Dict[str, Any] = field(default_factory=dict)
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    idempotency_key: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
@@ -157,9 +158,21 @@ def stop_workers():
 
 # --- Task Submission ---
 
-async def submit_task(task_type: str, payload: Dict[str, Any]) -> BackgroundTask:
-    """Submit a task to the background queue."""
-    task = BackgroundTask(task_type=task_type, payload=payload)
+async def submit_task(
+    task_type: str,
+    payload: Dict[str, Any],
+    idempotency_key: Optional[str] = None,
+) -> BackgroundTask:
+    """Submit a task to the background queue. Duplicate idempotency_key returns existing task."""
+    if idempotency_key:
+        for existing in _tasks.values():
+            if (
+                existing.idempotency_key == idempotency_key
+                and existing.status in (TaskStatus.PENDING, TaskStatus.RUNNING)
+            ):
+                return existing
+
+    task = BackgroundTask(task_type=task_type, payload=payload, idempotency_key=idempotency_key)
     _tasks[task.id] = task
     client = await _get_redis()
     if client:

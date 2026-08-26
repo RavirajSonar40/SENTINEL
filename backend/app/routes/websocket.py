@@ -1,9 +1,12 @@
 """WebSocket endpoint — live investigation progress updates."""
 import json
 import asyncio
+import logging
 from typing import Dict, Set, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from datetime import datetime, timezone
+
+logger = logging.getLogger("sentinel.websocket")
 
 router = APIRouter()
 
@@ -57,8 +60,8 @@ class ConnectionManager:
     async def send_personal(self, websocket: WebSocket, message: Dict):
         try:
             await websocket.send_json(message)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"WebSocket send failed: {e}")
 
 
 manager = ConnectionManager()

@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, String, DateTime, ForeignKey, Text, Integer, Float,
-    Enum as SAEnum, JSON, Boolean, Index
+    Enum as SAEnum, JSON, Boolean, Index, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -213,6 +213,9 @@ class Repository(Base):
 
 class RepositoryScope(Base):
     __tablename__ = "repository_scopes"
+    __table_args__ = (
+        UniqueConstraint("incident_id", "repository_id", name="uq_repository_scope_incident_repo"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     incident_id = Column(UUID(as_uuid=True), ForeignKey("incidents.id"), nullable=False)
@@ -281,6 +284,9 @@ class Incident(Base):
 
 class IncidentSignal(Base):
     __tablename__ = "incident_signals"
+    __table_args__ = (
+        Index("ix_incident_signals_fingerprint", "fingerprint", unique=True, postgresql_where="fingerprint IS NOT NULL"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     incident_id = Column(UUID(as_uuid=True), ForeignKey("incidents.id"), nullable=False)

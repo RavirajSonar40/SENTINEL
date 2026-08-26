@@ -1,12 +1,15 @@
 """Investigation engine API — triggers AI investigation pipeline."""
 import json
 import asyncio
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional, AsyncGenerator
 from datetime import datetime, timezone
+
+logger = logging.getLogger("sentinel.investigation")
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
@@ -225,11 +228,11 @@ async def _stream_investigation(
         try:
             s = SessionLocal()
             s.execute(sql_text("UPDATE investigations SET current_step=:s, progress_percent=:p WHERE id=:id"),
-                      {"s": step_name, "p": pct, "id": str(inv_id)})
+                       {"s": step_name, "p": pct, "id": str(inv_id)})
             s.commit()
             s.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Progress update failed: {e}")
 
     try:
         # Step 1: Planning
@@ -615,8 +618,8 @@ async def _stream_investigation(
         except Exception as persist_err:
             try:
                 persist_db.rollback()
-            except Exception:
-                pass
+            except Exception as rb_err:
+                logger.warning(f"Rollback also failed during recovery: {rb_err}")
             raise persist_err
         finally:
             persist_db.close()
@@ -646,12 +649,12 @@ async def _stream_investigation(
                 failed_investigation.completed_at = datetime.now(timezone.utc)
                 failed_db.commit()
             failed_db.close()
-        except Exception:
-            pass
+        except Exception as mark_err:
+            logger.warning(f"Failed to mark investigation as FAILED: {mark_err}")
         try:
             yield emit("error", {"message": str(e)[:500]})
-        except Exception:
-            pass
+        except Exception as emit_err:
+            logger.debug(f"SSE error emit failed: {emit_err}")
 
 
 @router.post("/investigate/stream")

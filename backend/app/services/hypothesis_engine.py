@@ -93,6 +93,24 @@ def generate_hypotheses(state: InvestigationState) -> List[Hypothesis]:
     hypotheses = []
     seen = set()
 
+    # Detect direct code task / file creation requests (e.g. 'add hello.txt', 'create component')
+    combined_text = f"{state.incident_title} {state.incident_description}".lower()
+    task_match = re.search(r'(?:add|create|update|implement|modify|generate|fix)\s+([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)', combined_text)
+    if task_match:
+        target_filename = task_match.group(1)
+        if target_filename not in seen:
+            seen.add(target_filename)
+            hypotheses.append(Hypothesis(
+                id=f"hyp_{len(hypotheses)}",
+                label=f"Implement {target_filename}",
+                description=f"Create or modify {target_filename} to satisfy the incident request",
+                confidence="high",
+                severity="low",
+                category="code_change",
+                supporting_evidence=[{"file": target_filename, "type": "task_target", "score": 1.0}],
+                supporting_count=1,
+            ))
+
     # Detect patterns
     patterns = detect_error_patterns(state.error_signals, state.incident_description)
 
@@ -156,7 +174,7 @@ def generate_hypotheses(state: InvestigationState) -> List[Hypothesis]:
             hypotheses.append(Hypothesis(
                 id=f"hyp_{len(hypotheses)}",
                 label=label,
-                description=f"Code in {file_path} may contain the bug based on semantic similarity to error signals",
+                description=f"Code in {file_path} requires modification based on incident signals",
                 confidence=conf,
                 severity="medium",
                 category="code_change",
@@ -164,26 +182,16 @@ def generate_hypotheses(state: InvestigationState) -> List[Hypothesis]:
                 supporting_count=len(file_evidence),
             ))
 
-    # Add catch-all hypotheses if too few
-    if len(hypotheses) < 3:
-        catch_alls = [
-            ("Recent Deployment", "A recent deployment introduced a regression", "deployment", "medium"),
-            ("Dependency Version Mismatch", "A dependency update caused compatibility issues", "dependency", "medium"),
-            ("Configuration Change", "A configuration change altered expected behavior", "config", "low"),
-            ("Infrastructure Failure", "An underlying infrastructure component is degraded", "infrastructure", "medium"),
-            ("Data State Issue", "An unexpected data state triggered the error", "data", "low"),
-        ]
-        for label, desc, category, confidence in catch_alls:
-            if label not in seen:
-                seen.add(label)
-                hypotheses.append(Hypothesis(
-                    id=f"hyp_{len(hypotheses)}",
-                    label=label,
-                    description=desc,
-                    confidence=confidence,
-                    severity="medium",
-                    category=category,
-                ))
+    # If no hypotheses found yet, formulate a grounded hypothesis from title
+    if not hypotheses:
+        hypotheses.append(Hypothesis(
+            id=f"hyp_{len(hypotheses)}",
+            label=f"Code Fix: {state.incident_title[:50]}",
+            description=f"Implement the requested code change described in: {state.incident_description[:120]}",
+            confidence="high",
+            severity="medium",
+            category="code_change",
+        ))
 
     # Sort by confidence
     conf_order = {"high": 0, "medium": 1, "low": 2}
@@ -194,24 +202,28 @@ def generate_hypotheses(state: InvestigationState) -> List[Hypothesis]:
 
 async def generate_hypotheses_llm(state: InvestigationState, evidence: List[Dict]) -> List[Hypothesis]:
     """Use LLM to generate hypotheses based on incident and evidence."""
-    system_prompt = """You are an expert incident investigator. Given an incident and collected evidence, generate competing hypotheses about the root cause.
+    system_prompt = """You are an expert incident response and code investigation agent.
+Given an incident description and collected evidence, generate 1-3 precise, technical hypotheses explaining the root cause or the exact code change needed.
+
+RULES:
+- Be strictly grounded in the incident text and evidence.
+- DO NOT generate generic boilerplate hypotheses like 'Disk space full', 'Local git corruption', 'Branch protection rules', or 'Filesystem issue' unless explicitly mentioned in log traces.
+- If the incident asks to create, modify, or fix a file, generate a direct code remediation hypothesis.
 
 Respond with JSON:
 {
   "hypotheses": [
     {
       "label": "Short name for the hypothesis",
-      "description": "Detailed explanation of what might be causing the incident",
+      "description": "Precise explanation of what code/component is broken or needs modification",
       "confidence": "high|medium|low",
       "category": "code_change|dependency|config|deployment|infrastructure|data",
       "severity": "low|medium|high|critical",
-      "evidence_for": ["list of evidence supporting this"],
-      "evidence_against": ["list of evidence contradicting this"]
+      "evidence_for": ["list of supporting evidence"],
+      "evidence_against": []
     }
   ]
-}
-
-Generate 3-5 competing hypotheses. Be specific and technical."""
+}"""
 
     evidence_text = json.dumps(evidence[:10], indent=2) if evidence else "No evidence collected yet."
 

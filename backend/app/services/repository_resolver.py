@@ -110,26 +110,37 @@ def resolve_repositories(
                 c.score += SCORE_DEPLOYMENT
                 c.reasons.append(f"deployment_correlation({deployment.version})")
 
-    # --- Signal 5: Keyword match on title/description (+20) ---
+    # --- Signal 5: Keyword & Fuzzy match on title/description (+20 to +80) ---
+    import difflib
     if incident.title or incident.description:
         text = f"{incident.title or ''} {incident.description or ''}".lower()
+        words = set(re.findall(r'[a-z0-9_-]{3,}', text))
         all_repos = db.query(Repository).all()
         for repo in all_repos:
-            repo_words = set(repo.name.lower().replace("-", " ").replace("_", " ").split())
-            text_words = set(text.split())
-            overlap = repo_words & text_words
-            # Filter out very common words
-            common = {"the", "a", "an", "is", "was", "in", "on", "at", "to", "for", "of", "and", "or", "error", "failed", "service"}
-            meaningful = overlap - common
-            if meaningful:
+            repo_name = repo.name.lower()
+            repo_full = repo.full_name.lower()
+            repo_parts = set(re.findall(r'[a-z0-9_-]{3,}', f"{repo_name} {repo_full}"))
+            
+            # Exact word match
+            overlap = words & repo_parts
+            if overlap:
                 c = _get_or_create(repo)
-                c.score += SCORE_KEYWORD
-                c.reasons.append(f"keyword_match({','.join(meaningful)})")
+                c.score += SCORE_KEYWORD * len(overlap)
+                c.reasons.append(f"keyword_match({','.join(overlap)})")
+            
+            # Fuzzy match for typos (e.g. 'sentinle' vs 'sentinel')
+            for w in words:
+                for rp in repo_parts:
+                    ratio = difflib.SequenceMatcher(None, w, rp).ratio()
+                    if ratio >= 0.75 and ratio < 1.0:
+                        c = _get_or_create(repo)
+                        c.score += int(SCORE_KEYWORD * 2 * ratio)
+                        c.reasons.append(f"fuzzy_repo_match({w}->{rp}:{ratio:.2f})")
 
     # Filter by threshold and sort
     results = [c for c in candidates.values() if c.score >= threshold]
     
-    # If no candidate exceeded threshold, fall back to any matched or connected repositories
+    # If no candidate exceeded threshold, fall back to best matched or connected repositories
     if not results:
         if candidates:
             # Pick highest scoring candidate

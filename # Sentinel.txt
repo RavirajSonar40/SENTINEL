@@ -1,0 +1,2634 @@
+# Sentinel
+
+## Product Requirements Document & System Architecture Specification
+
+**Status:** Architecture Baseline — v1.0
+**Product:** Sentinel
+**Category:** Autonomous AI Incident Response / AI SRE
+**Primary objective:** Detect production incidents automatically, investigate their root causes using operational and software-engineering evidence, generate and validate a remediation, and prepare a reviewable GitHub Pull Request for human approval.
+
+---
+
+# 1. Executive Summary
+
+Sentinel is an AI-powered incident-response platform designed to reduce the amount of manual investigation required when a production system fails.
+
+The fundamental problem is not simply that engineers need help reading error messages.
+
+The real problem is that an incident requires **correlating information distributed across multiple systems**:
+
+* production metrics
+* application logs
+* traces
+* alerts
+* deployments
+* Git commits
+* pull requests
+* source code
+* documentation
+* runbooks
+* previous incidents
+* postmortems
+
+Today, an on-call engineer often has to manually move between these systems.
+
+Sentinel's purpose is to perform that investigation automatically.
+
+The target workflow is:
+
+```text
+Production anomaly
+        ↓
+Incident detection
+        ↓
+Automatic incident creation
+        ↓
+Determine affected service
+        ↓
+Determine relevant repository/repositories
+        ↓
+Investigate production evidence
+        ↓
+Investigate Git history and recent changes
+        ↓
+Retrieve relevant code/documentation
+        ↓
+Generate competing hypotheses
+        ↓
+Evaluate hypotheses against evidence
+        ↓
+Identify likely root cause
+        ↓
+Generate remediation
+        ↓
+Validate remediation
+        ↓
+Human review
+        ↓
+Create Draft GitHub PR
+```
+
+Sentinel also supports a manual entry point:
+
+```text
+Engineer notices a problem
+        ↓
+Paste error / logs / stack trace
+        ↓
+Sentinel investigation
+        ↓
+Same investigation pipeline
+```
+
+The two modes therefore have different **incident sources**, but share the same **investigation and remediation engine**.
+
+---
+
+# 2. Product Vision
+
+Sentinel should behave like an **AI incident-response engineer**, not a chatbot.
+
+A chatbot answers:
+
+> "What does this stack trace mean?"
+
+Sentinel should answer:
+
+> "A production regression was detected at 14:32. The regression began 11 minutes after deployment `v2.8.1`. Commit `abc123` changed the database connection-pool configuration. The affected execution path is `PaymentController → PaymentService → PaymentRepository`. Production telemetry shows connection-pool saturation while database query latency remained normal. Competing hypotheses involving Redis and the external payment provider were investigated and rejected. The most likely root cause is connection-pool exhaustion introduced by `abc123`. A remediation was generated, tested successfully, and is ready for human approval."
+
+That distinction defines the product.
+
+---
+
+# 3. Core Product Principles
+
+## 3.1 Evidence before conclusion
+
+Sentinel must not produce a root-cause claim merely because an LLM can generate a plausible explanation.
+
+Every important conclusion must be supported by evidence.
+
+```text
+Claim
+  ↓
+Evidence
+  ↓
+Source
+  ↓
+Provenance
+```
+
+---
+
+## 3.2 Competing hypotheses
+
+Sentinel should not immediately lock onto the first plausible explanation.
+
+It should generate multiple hypotheses where appropriate.
+
+Example:
+
+```text
+H1 — Database connection pool exhaustion
+H2 — Redis timeout
+H3 — External payment provider latency
+H4 — Application deadlock
+```
+
+Each hypothesis is evaluated against supporting, contradictory, and missing evidence.
+
+---
+
+## 3.3 Temporal reasoning
+
+Production incidents are strongly related to changes over time.
+
+Sentinel must consider:
+
+```text
+incident time
+deployment time
+commit time
+PR merge time
+configuration change time
+metric anomaly time
+log anomaly time
+```
+
+For example:
+
+```text
+14:10  Commit
+14:20  Deployment
+14:32  Error spike
+```
+
+This is useful evidence, but temporal correlation alone must never be treated as proof.
+
+---
+
+## 3.4 Automatic repository discovery
+
+In **Automatic Mode**, the user must not be required to select a repository.
+
+Sentinel should determine relevant repositories using:
+
+* affected service
+* service-to-repository mapping
+* deployment metadata
+* GitHub metadata
+* changed files
+* stack traces
+* package/module information
+* code ownership
+* dependency relationships
+* investigation evidence
+
+The user may constrain scope if necessary, but repository selection is not a prerequisite for automatic detection.
+
+---
+
+## 3.5 Human approval before repository modification
+
+Sentinel may:
+
+* investigate automatically
+* generate a patch
+* run validation
+* create a branch
+* prepare a proposed PR
+
+But Sentinel must **not autonomously merge code into production**.
+
+The initial safety boundary is:
+
+```text
+AI proposes
+     ↓
+AI validates
+     ↓
+Human reviews
+     ↓
+Human approves
+     ↓
+Draft PR created
+```
+
+---
+
+## 3.6 Abstention is a valid outcome
+
+If evidence is insufficient, Sentinel must say so.
+
+Example:
+
+```text
+Root Cause: Undetermined
+
+Confidence: Insufficient evidence
+
+Required additional evidence:
+- deployment identifier
+- application logs
+- database metrics
+```
+
+A correct "I don't know" is preferable to an incorrect root cause.
+
+---
+
+# 4. Target Users
+
+## Primary User — On-call Engineer
+
+A software engineer responsible for responding to production incidents.
+
+Needs:
+
+* fast incident detection
+* evidence-backed RCA
+* reduced context switching
+* clear timeline
+* confidence assessment
+* actionable remediation
+* reviewable code changes
+
+---
+
+## Secondary User — Engineering Lead / SRE
+
+Needs:
+
+* incident history
+* recurring failure patterns
+* investigation quality
+* auditability
+* remediation history
+* system health
+
+---
+
+# 5. Product Modes
+
+Sentinel has exactly two primary incident-entry modes.
+
+# 5.1 Manual Investigation
+
+Manual mode exists for known incidents.
+
+The user can provide:
+
+* error message
+* stack trace
+* logs
+* incident description
+* timestamps
+* affected service if known
+* optional context
+
+The user may optionally constrain repository scope.
+
+Example:
+
+```text
+Error:
+NullPointerException at PaymentService.java:142
+
+Additional context:
+Started after today's deployment.
+
+Repositories:
+Optional / automatically inferred
+```
+
+Manual mode then enters the same investigation engine used by automatic incidents.
+
+---
+
+# 5.2 Automatic Incident Response
+
+Automatic mode is Sentinel's primary differentiating capability.
+
+Production systems provide signals such as:
+
+* metrics
+* logs
+* traces
+* alerts
+* deployment events
+* application health signals
+
+Sentinel detects abnormal behavior and creates an incident automatically.
+
+Example:
+
+```text
+p95 latency:
+200 ms → 4.2 s
+
+Error rate:
+0.3% → 8.7%
+
+Deployment:
+v2.8.1 deployed 12 minutes earlier
+```
+
+Sentinel creates:
+
+```text
+INC-142
+Payment API latency regression
+```
+
+and begins investigation without requiring an engineer to manually initiate it.
+
+---
+
+# 6. Automatic Detection Architecture
+
+Detection and investigation are separate subsystems.
+
+## Detection answers:
+
+> "Is something abnormal happening?"
+
+## Investigation answers:
+
+> "Why is it happening?"
+
+Architecture:
+
+```text
+Metrics
+Logs
+Traces
+Alerts
+Deployments
+   │
+   ▼
+Detection Layer
+   │
+   ├── anomaly detected
+   ├── threshold exceeded
+   ├── alert received
+   └── deployment regression detected
+   │
+   ▼
+Incident Manager
+   │
+   ▼
+Investigation Engine
+```
+
+---
+
+# 7. Initial Automatic Detection Strategy
+
+Sentinel should not attempt to build a sophisticated universal anomaly-detection system in the first implementation.
+
+The initial architecture should support:
+
+### Alert-driven detection
+
+An external monitoring system reports:
+
+```text
+ERROR_RATE_HIGH
+LATENCY_HIGH
+SERVICE_DOWN
+```
+
+Sentinel converts this into an incident.
+
+### Metric threshold detection
+
+For controlled demonstrations and local development:
+
+```text
+error_rate > threshold
+latency > threshold
+```
+
+### Deployment regression detection
+
+Sentinel correlates:
+
+```text
+deployment
+      +
+metric degradation
+```
+
+This provides a practical automatic MVP while leaving room for more sophisticated anomaly detection later.
+
+---
+
+# 8. Incident Manager
+
+The Incident Manager is responsible for creating and maintaining incidents regardless of their source.
+
+Incident sources:
+
+```text
+MANUAL
+ALERT
+PROMETHEUS
+SENTRY
+WEBHOOK
+DEPLOYMENT_REGRESSION
+FUTURE_SOURCE
+```
+
+The investigation engine should not care which source created the incident.
+
+Conceptually:
+
+```text
+IncidentSource
+      ↓
+Incident
+      ↓
+Investigation
+```
+
+---
+
+# 9. Incident Lifecycle
+
+An incident should have explicit states.
+
+```text
+DETECTED
+   ↓
+CREATED
+   ↓
+INVESTIGATION_QUEUED
+   ↓
+INVESTIGATING
+   ↓
+ROOT_CAUSE_ANALYSIS
+   ↓
+ROOT_CAUSE_IDENTIFIED
+   ↓
+FIX_GENERATED
+   ↓
+FIX_VALIDATING
+   ↓
+AWAITING_APPROVAL
+   ↓
+APPROVED
+   ↓
+REMEDIATION
+   ↓
+DRAFT_PR_CREATED
+```
+
+Alternative states:
+
+```text
+INSUFFICIENT_EVIDENCE
+INVESTIGATION_FAILED
+FIX_GENERATION_FAILED
+VALIDATION_FAILED
+HUMAN_REJECTED
+CANCELLED
+RESOLVED
+```
+
+---
+
+# 10. Investigation Orchestrator
+
+The Investigation Orchestrator is the central coordinator.
+
+It should **not** be implemented as one enormous prompt.
+
+It manages a stateful investigation workflow.
+
+Conceptually:
+
+```text
+Incident
+   ↓
+Investigation Planner
+   ↓
+Investigation Tasks
+   ↓
+Evidence Collection
+   ↓
+Analysis
+   ↓
+Hypotheses
+   ↓
+Critique
+   ↓
+Root Cause
+   ↓
+Remediation
+```
+
+The orchestrator maintains:
+
+* current investigation state
+* completed tasks
+* pending tasks
+* evidence
+* hypotheses
+* tool results
+* failures
+* retry counts
+* confidence
+* final conclusion
+
+A stateful orchestration framework such as LangGraph may be used for this layer.
+
+---
+
+# 11. Investigation Planning
+
+The planner receives the incident context.
+
+Example:
+
+```text
+Incident:
+Payment API latency increased from 200 ms to 4 s.
+
+Observed:
+Started at 14:32.
+
+Deployment:
+v2.8.1 at 14:20.
+```
+
+The planner may generate tasks:
+
+```text
+1. Identify affected service.
+2. Identify owning repository.
+3. Retrieve recent deployments.
+4. Retrieve commits before incident.
+5. Inspect changed files.
+6. Search relevant code.
+7. Retrieve operational evidence.
+8. Search relevant runbooks.
+9. Search previous incidents.
+10. Generate competing hypotheses.
+```
+
+The planner should dynamically add tasks when evidence requires further investigation.
+
+---
+
+# 12. Repository and Service Discovery
+
+This is a major feature.
+
+Sentinel maintains a service/repository topology.
+
+Example:
+
+```text
+payment-api
+     │
+     ├── payment-service repository
+     │
+     ├── payment-common repository
+     │
+     └── fraud-service dependency
+```
+
+Given:
+
+```text
+service = payment-api
+```
+
+Sentinel determines relevant repositories.
+
+Evidence sources include:
+
+* deployment metadata
+* GitHub repository metadata
+* service registry
+* stack traces
+* package/module names
+* ownership metadata
+* dependency graph
+* code imports
+* previous incidents
+
+Automatic mode should not force the user to manually choose a repository.
+
+---
+
+# 13. Evidence Engine
+
+Evidence is a first-class domain object.
+
+Evidence may originate from:
+
+### Production
+
+* metrics
+* logs
+* traces
+* alerts
+* deployment events
+
+### Git
+
+* commits
+* diffs
+* branches
+* tags
+* deployment history
+
+### Code
+
+* functions
+* classes
+* call paths
+* dependencies
+* configuration
+
+### Documentation
+
+* runbooks
+* architecture documentation
+* troubleshooting guides
+
+### Historical knowledge
+
+* previous incidents
+* postmortems
+* previously resolved problems
+
+---
+
+# 14. Evidence Provenance
+
+Every evidence item should contain enough information to trace it back to its source.
+
+Example:
+
+```json
+{
+  "sourceType": "COMMIT",
+  "repository": "payment-service",
+  "commitSha": "abc123",
+  "filePath": "src/db/pool.js",
+  "lineStart": 42,
+  "lineEnd": 48,
+  "timestamp": "...",
+  "content": "...",
+  "sourceUrl": "..."
+}
+```
+
+For logs:
+
+```json
+{
+  "sourceType": "LOG",
+  "service": "payment-api",
+  "timestamp": "...",
+  "query": "...",
+  "content": "..."
+}
+```
+
+For metrics:
+
+```json
+{
+  "sourceType": "METRIC",
+  "metric": "db_pool_utilization",
+  "windowStart": "...",
+  "windowEnd": "...",
+  "value": "100%"
+}
+```
+
+The UI should allow users to inspect the underlying evidence.
+
+---
+
+# 15. Retrieval Architecture
+
+Sentinel should use **hybrid retrieval**, not vector search alone.
+
+Retrieval types:
+
+```text
+Semantic retrieval
+Keyword retrieval
+Exact symbol retrieval
+File/path retrieval
+Git history retrieval
+Temporal filtering
+Metadata filtering
+```
+
+Architecture:
+
+```text
+Query
+ │
+ ├── Vector Search ──────┐
+ │                       │
+ ├── Keyword Search ─────┤
+ │                       ▼
+ ├── Symbol Search ──► Reranker
+ │                       │
+ └── Git Search ────────┘
+                         │
+                         ▼
+                      Evidence
+```
+
+---
+
+# 16. Qdrant
+
+Qdrant is used for semantic retrieval.
+
+Indexed content includes:
+
+* code
+* functions
+* classes
+* documentation
+* runbooks
+* previous incidents
+* postmortems
+* PR descriptions
+* commit messages
+
+Every vector must have metadata such as:
+
+```text
+repository_id
+commit_sha
+file_path
+symbol
+document_type
+language
+timestamp
+chunk_type
+```
+
+This enables constrained retrieval.
+
+---
+
+# 17. Temporal Retrieval
+
+Temporal filtering is essential.
+
+If an incident occurred at:
+
+```text
+14:32
+```
+
+Sentinel should not use code introduced at:
+
+```text
+15:00
+```
+
+as evidence for the cause of the 14:32 incident.
+
+Retrieval therefore considers:
+
+```text
+incident_time
+commit_time
+deployment_time
+```
+
+and should support queries such as:
+
+```text
+repository = payment-service
+AND commit_time <= incident_time
+```
+
+The system may still inspect later commits for contextual understanding, but they must not be incorrectly treated as causal evidence.
+
+---
+
+# 18. Code Intelligence
+
+Code should be indexed in a code-aware manner.
+
+Instead of blindly splitting files into arbitrary token chunks:
+
+```text
+file → 500-token chunks
+```
+
+the system should aim to understand:
+
+```text
+Repository
+  ↓
+File
+  ↓
+Class
+  ↓
+Function
+  ↓
+Symbol
+  ↓
+Dependencies
+```
+
+Relevant metadata should be retained.
+
+The system should eventually be able to answer:
+
+> Which changed function lies on the execution path associated with the failing operation?
+
+---
+
+# 19. Git Intelligence
+
+Git history is central to Sentinel.
+
+The system should retrieve:
+
+* recent commits
+* commit messages
+* changed files
+* diffs
+* PR descriptions
+* PR discussions where available
+* deployment-associated commits
+* branches
+* tags
+
+A particularly important investigation pattern is:
+
+```text
+Incident
+   ↓
+Recent deployment
+   ↓
+Changes included in deployment
+   ↓
+Changed files
+   ↓
+Relevant execution path
+   ↓
+Potential cause
+```
+
+---
+
+# 20. Hypothesis Engine
+
+Sentinel must generate competing hypotheses.
+
+Example:
+
+```text
+H1 — Database connection pool exhaustion
+H2 — Redis timeout
+H3 — External provider latency
+H4 — Application deadlock
+```
+
+Each hypothesis should have:
+
+```text
+id
+description
+supporting evidence
+contradicting evidence
+missing evidence
+confidence
+status
+```
+
+---
+
+# 21. Hypothesis Evaluation
+
+A hypothesis is not accepted simply because the LLM says it sounds plausible.
+
+Evaluation should consider:
+
+### Temporal evidence
+
+Did the suspected change occur before the incident?
+
+### Causal relevance
+
+Does the changed component actually participate in the affected request?
+
+### Operational evidence
+
+Does production behavior match the hypothesis?
+
+### Code evidence
+
+Does the code contain a mechanism capable of producing the observed failure?
+
+### Historical evidence
+
+Have similar incidents occurred?
+
+### Contradictory evidence
+
+Is there evidence against the hypothesis?
+
+The result should be an evidence-backed assessment.
+
+---
+
+# 22. Confidence
+
+Confidence must be grounded in evidence.
+
+Do not allow the model to arbitrarily state:
+
+```text
+Confidence = 97%
+```
+
+Instead the UI should communicate factors such as:
+
+```text
+Confidence: HIGH
+
+Supporting factors:
+✓ Recent relevant code change
+✓ Deployment preceded incident
+✓ Affected execution path confirmed
+✓ Production telemetry matches hypothesis
+✓ No major contradictory evidence
+```
+
+Numerical confidence can be introduced later if a calibrated evaluation methodology exists.
+
+---
+
+# 23. Root Cause / Abstention
+
+The final investigation outcome is one of:
+
+```text
+ROOT_CAUSE_IDENTIFIED
+```
+
+or:
+
+```text
+INSUFFICIENT_EVIDENCE
+```
+
+A root cause must contain:
+
+```text
+summary
+affected component
+causal explanation
+supporting evidence
+contradicting evidence
+confidence
+relevant commits
+relevant files
+timeline
+```
+
+---
+
+# 24. Example Root Cause
+
+```text
+Root Cause
+
+Database connection pool exhaustion introduced in deployment v2.8.1.
+
+Evidence:
+
+1. Commit abc123 reduced maximum connections from 100 to 20.
+2. The commit was deployed at 14:20.
+3. Error rate increased at 14:32.
+4. PaymentService uses the affected connection pool.
+5. Production telemetry shows 20/20 connections occupied.
+6. Database query latency remained normal.
+7. Redis and external provider telemetry remained normal.
+
+Conclusion:
+
+The most likely cause is connection pool exhaustion caused by
+the configuration change introduced by abc123.
+```
+
+---
+
+# 25. Remediation Engine
+
+Once a root cause is sufficiently supported, Sentinel generates a remediation.
+
+The remediation must include:
+
+```text
+problem
+root cause
+proposed change
+affected files
+expected behavior
+risk
+validation strategy
+```
+
+It should generate an actual patch/diff.
+
+---
+
+# 26. Safety Boundary
+
+Sentinel must never directly modify the production branch.
+
+The remediation workflow is:
+
+```text
+Root Cause
+    ↓
+Generate Patch
+    ↓
+Create Temporary Branch
+    ↓
+Apply Patch
+    ↓
+Run Validation
+    ↓
+Human Review
+    ↓
+Create Draft PR
+```
+
+---
+
+# 27. Validation Engine
+
+Before presenting a PR, Sentinel should validate the proposed fix.
+
+Initial checks:
+
+```text
+lint
+unit tests
+build
+integration tests where available
+```
+
+Later:
+
+```text
+static analysis
+security scanning
+targeted regression tests
+```
+
+If validation fails:
+
+```text
+Fix Validation Failed
+```
+
+The system should not create a confident remediation PR merely because the LLM generated syntactically valid code.
+
+---
+
+# 28. Human Approval
+
+The UI must show:
+
+```text
+Incident
+
+Root Cause
+Evidence
+Timeline
+Hypotheses
+Rejected hypotheses
+Proposed Fix
+Code Diff
+Validation Results
+Risk
+```
+
+Then:
+
+```text
+[ Reject ]     [ Approve & Create Draft PR ]
+```
+
+Human approval is explicit.
+
+---
+
+# 29. Draft PR
+
+The generated PR should contain:
+
+### Title
+
+Short description of remediation.
+
+### Incident
+
+Link to Sentinel incident.
+
+### Root Cause
+
+Evidence-backed explanation.
+
+### Evidence
+
+Relevant commits, files, metrics, logs, etc.
+
+### Fix
+
+Explanation of code changes.
+
+### Validation
+
+Tests and checks executed.
+
+### Risk
+
+Potential side effects.
+
+The PR must be a **draft PR** initially.
+
+---
+
+# 30. No Autonomous Merge
+
+The initial system explicitly does not support:
+
+```text
+AI → merge → production
+```
+
+The supported workflow is:
+
+```text
+AI → investigate
+AI → propose
+AI → validate
+Human → approve
+AI → create Draft PR
+Human → merge
+```
+
+---
+
+# 31. PostgreSQL Architecture
+
+PostgreSQL is the system of record for Sentinel.
+
+It stores structured application state.
+
+Core entities:
+
+```text
+users
+organizations
+repositories
+services
+
+incidents
+investigations
+investigation_tasks
+
+evidence
+evidence_sources
+
+hypotheses
+hypothesis_evidence
+
+root_causes
+
+proposed_fixes
+fix_files
+
+validation_runs
+validation_results
+
+approvals
+
+branches
+pull_requests
+
+agent_runs
+tool_calls
+
+audit_events
+```
+
+---
+
+# 32. Why PostgreSQL
+
+Sentinel's core data is highly relational.
+
+For example:
+
+```text
+Incident
+ ↓
+Investigation
+ ↓
+Evidence
+ ↓
+Hypothesis
+ ↓
+Root Cause
+ ↓
+Fix
+ ↓
+Approval
+ ↓
+PR
+```
+
+There are also many-to-many relationships such as:
+
+```text
+Hypothesis ↔ Evidence
+```
+
+PostgreSQL provides:
+
+* transactions
+* foreign keys
+* constraints
+* relational queries
+* indexing
+* durable state
+* auditability
+
+Dynamic AI artifacts can use PostgreSQL JSONB where appropriate.
+
+MongoDB is therefore not part of the final Sentinel architecture.
+
+---
+
+# 33. Qdrant Architecture
+
+Qdrant is the semantic retrieval system.
+
+It is not the primary application database.
+
+```text
+PostgreSQL
+    ↓
+Application state
+
+Qdrant
+    ↓
+Semantic retrieval
+```
+
+---
+
+# 34. Redis Architecture
+
+Redis is used for operational concerns:
+
+* distributed locks
+* caching
+* job coordination
+* deduplication
+* rate limiting
+* temporary state
+
+Redis is not the system of record.
+
+---
+
+# 35. Object Storage
+
+Large artifacts should not be unnecessarily stored in PostgreSQL.
+
+Object storage may be used for:
+
+* large logs
+* investigation artifacts
+* generated reports
+* large patches
+* raw telemetry snapshots
+
+PostgreSQL stores metadata and references.
+
+---
+
+# 36. GitHub Integration
+
+GitHub provides:
+
+* repository discovery
+* source code
+* commit history
+* diffs
+* PRs
+* branches
+* deployment information where available
+* branch creation
+* commit creation
+* Draft PR creation
+
+GitHub remains the source of truth for repository contents.
+
+---
+
+# 37. Observability Integrations
+
+The automatic system should eventually support:
+
+```text
+Prometheus
+Sentry
+Grafana / alerting systems
+application logs
+distributed tracing
+deployment systems
+```
+
+However, these integrations should be implemented incrementally.
+
+The internal interface should be generic:
+
+```text
+ObservabilityProvider
+    ↓
+get_alerts()
+get_metrics()
+get_logs()
+get_traces()
+```
+
+This prevents the core investigation engine from being tightly coupled to one monitoring vendor.
+
+---
+
+# 38. Automatic Detection Interface
+
+Conceptually:
+
+```python
+class IncidentSignalProvider:
+    def get_signals(...)
+    def detect_incidents(...)
+```
+
+The provider converts external events into a normalized Sentinel incident signal.
+
+The investigation engine consumes the normalized incident rather than provider-specific formats.
+
+---
+
+# 39. Event-Driven Architecture
+
+The long-term Sentinel architecture should be event-driven.
+
+Example:
+
+```text
+Production Alert
+      ↓
+IncidentDetected
+      ↓
+InvestigationRequested
+      ↓
+EvidenceCollected
+      ↓
+HypothesesGenerated
+      ↓
+RootCauseIdentified
+      ↓
+FixGenerated
+      ↓
+ValidationRequested
+      ↓
+ApprovalRequested
+      ↓
+DraftPRRequested
+```
+
+These events should be persisted/auditable.
+
+Redis can assist with job coordination, while PostgreSQL remains the durable application state.
+
+---
+
+# 40. Backend Architecture
+
+Current backend:
+
+```text
+FastAPI
+   │
+   ├── Auth
+   ├── Incidents
+   ├── Repositories
+   └── Investigations
+```
+
+Target backend:
+
+```text
+FastAPI
+│
+├── Auth
+│
+├── Incidents
+│
+├── Services
+│
+├── Repositories
+│
+├── Integrations
+│   ├── GitHub
+│   ├── Prometheus
+│   ├── Sentry
+│   └── Observability
+│
+├── Investigation
+│   ├── Planner
+│   ├── Retrieval
+│   ├── Evidence
+│   ├── Hypothesis
+│   ├── Root Cause
+│   └── Remediation
+│
+├── Validation
+│
+├── Pull Requests
+│
+└── Workers
+```
+
+---
+
+# 41. Frontend Architecture
+
+The current UI is preserved and expanded.
+
+Target navigation:
+
+```text
+Overview
+
+Incidents
+Automatic Response
+Services
+Investigations
+Pull Requests
+Repositories / Integrations
+Health
+Settings
+```
+
+The exact visual design should follow the existing Stitch design.
+
+Stitch is the visual source of truth.
+
+OpenCode should inspect the existing Stitch design before modifying the frontend.
+
+---
+
+# 42. Incident Dashboard
+
+The incident dashboard should display:
+
+* incident ID
+* severity
+* source
+* affected service
+* status
+* detection time
+* investigation status
+* root-cause confidence
+* remediation status
+* PR status
+
+Example:
+
+```text
+INC-142
+Payment API Latency
+
+SEV-1
+Automatically detected
+
+Status:
+Investigating
+
+Affected Service:
+payment-api
+
+Investigation:
+67%
+
+Potential Root Cause:
+Database connection pool exhaustion
+```
+
+---
+
+# 43. Automatic Response Dashboard
+
+The automatic panel should show:
+
+```text
+Monitoring
+● Active
+
+Connected sources
+✓ Prometheus
+✓ GitHub
+○ Sentry
+
+Recent automatic incidents
+
+INC-142
+Payment latency
+Investigating
+
+INC-141
+Authentication errors
+Resolved
+
+INC-140
+Redis latency
+PR awaiting approval
+```
+
+The user should be able to inspect the full investigation.
+
+---
+
+# 44. Investigation Detail Page
+
+This is one of the most important screens.
+
+It should contain:
+
+```text
+Incident Summary
+        ↓
+Timeline
+        ↓
+Production Signals
+        ↓
+Investigation Progress
+        ↓
+Evidence
+        ↓
+Hypotheses
+        ↓
+Root Cause
+        ↓
+Proposed Fix
+        ↓
+Validation
+        ↓
+Approval
+        ↓
+Draft PR
+```
+
+---
+
+# 45. Investigation Timeline
+
+Example:
+
+```text
+14:10
+Commit abc123
+
+14:20
+Deployment v2.8.1
+
+14:32
+Latency anomaly detected
+
+14:33
+Incident created
+
+14:34
+Investigation started
+
+14:36
+17 relevant commits found
+
+14:38
+4 hypotheses generated
+
+14:40
+3 hypotheses rejected
+
+14:41
+Root cause identified
+
+14:43
+Fix generated
+
+14:44
+Tests passed
+
+14:45
+Awaiting approval
+```
+
+---
+
+# 46. Evidence UI
+
+Each evidence item should display:
+
+```text
+Source
+Timestamp
+Repository/service
+Relevant content
+Why it matters
+Source link
+```
+
+Example:
+
+```text
+COMMIT
+
+abc123
+
+payment-service
+
+Changed:
+src/db/pool.js
+
+Why relevant:
+Modified connection-pool configuration 12 minutes
+before the production regression.
+
+[View on GitHub]
+```
+
+---
+
+# 47. Hypothesis UI
+
+Example:
+
+```text
+Hypotheses
+
+✓ H1 — DB connection pool exhaustion
+   HIGH confidence
+
+✗ H2 — Redis timeout
+   Rejected
+
+✗ H3 — External provider latency
+   Rejected
+
+? H4 — Deadlock
+   Insufficient evidence
+```
+
+The user should be able to inspect why a hypothesis was accepted or rejected.
+
+---
+
+# 48. Proposed Fix UI
+
+Display:
+
+```text
+Root Cause
+Database connection pool exhaustion
+
+Proposed Fix
+Increase maximum connection pool size.
+
+Files Changed
+src/db/pool.js
+
+Diff
+[code diff viewer]
+
+Validation
+✓ Unit tests
+✓ Integration tests
+✓ Build
+
+Risk
+Higher database connection utilization.
+
+[Reject]
+[Approve & Create Draft PR]
+```
+
+---
+
+# 49. Security Requirements
+
+Sentinel handles potentially sensitive source code and production data.
+
+Required security principles:
+
+### Repository authorization
+
+Only repositories accessible to the authorized integration may be investigated.
+
+### Scope enforcement
+
+Every GitHub/retrieval operation must have explicit authorization context.
+
+### Secret protection
+
+Never intentionally index:
+
+```text
+.env
+private keys
+API tokens
+passwords
+credentials
+```
+
+### Prompt injection defense
+
+Repository files, documentation, commit messages, logs, and issue descriptions must be treated as **untrusted data**.
+
+Content such as:
+
+```text
+IGNORE ALL PREVIOUS INSTRUCTIONS
+```
+
+must never be treated as an instruction to the Sentinel agent.
+
+### Audit trail
+
+Sensitive actions must be recorded.
+
+---
+
+# 50. Observability of Sentinel Itself
+
+Sentinel must monitor itself.
+
+We need visibility into:
+
+* investigation latency
+* retrieval latency
+* LLM latency
+* token/cost usage
+* tool failures
+* investigation failures
+* hypothesis counts
+* validation failures
+* PR generation failures
+
+The AI incident-response system itself must be observable.
+
+---
+
+# 51. Failure Handling
+
+External systems fail.
+
+Examples:
+
+```text
+GitHub unavailable
+Qdrant unavailable
+PostgreSQL unavailable
+LLM timeout
+Prometheus unavailable
+test command fails
+repository inaccessible
+```
+
+The investigation should represent these failures explicitly.
+
+Example:
+
+```text
+GitHub retrieval failed.
+
+Retry:
+2 / 3
+
+Reason:
+GitHub API timeout.
+```
+
+Do not silently fabricate evidence.
+
+---
+
+# 52. Retry Policy
+
+Transient operations may be retried.
+
+Example:
+
+```text
+Attempt 1
+Attempt 2
+Attempt 3
+```
+
+After the maximum retry count:
+
+```text
+Task failed
+```
+
+The investigation may continue if the missing evidence is non-critical.
+
+If critical evidence is unavailable:
+
+```text
+Investigation blocked
+```
+
+---
+
+# 53. Deduplication
+
+Automatic systems can receive duplicate alerts.
+
+Sentinel must prevent:
+
+```text
+Alert A
+Alert A
+Alert A
+```
+
+from becoming:
+
+```text
+INC-101
+INC-102
+INC-103
+```
+
+for the same underlying incident.
+
+Deduplication should consider:
+
+* affected service
+* error signature
+* time window
+* alert fingerprint
+* deployment
+* incident state
+
+---
+
+# 54. Incident Correlation
+
+Multiple alerts may belong to one incident.
+
+Example:
+
+```text
+Payment API latency ↑
+Payment API errors ↑
+Database connection pool ↑
+```
+
+These may represent one incident.
+
+Sentinel should eventually correlate related signals into a single incident.
+
+This is different from simply treating every alert as an independent incident.
+
+---
+
+# 55. Deployment Correlation
+
+Deployment information should be treated as high-value evidence.
+
+Example:
+
+```text
+Deployment v2.8.1
+        ↓
+12 minutes
+        ↓
+Error rate spike
+```
+
+Sentinel should automatically investigate recent changes.
+
+But it must avoid the logical fallacy:
+
+```text
+deployment happened before incident
+        ≠
+deployment caused incident
+```
+
+The system must gather additional evidence.
+
+---
+
+# 56. Historical Incident Intelligence
+
+Previous incidents can become useful evidence.
+
+Example:
+
+```text
+Current incident:
+Database timeout
+
+Previous incident:
+Similar timeout caused by connection-pool exhaustion.
+```
+
+Sentinel retrieves historical incidents using Qdrant and structured metadata.
+
+Historical similarity is evidence, not proof.
+
+---
+
+# 57. Learning / Feedback
+
+Human review provides feedback.
+
+When the user:
+
+```text
+approves
+rejects
+modifies
+```
+
+a remediation, Sentinel should record the outcome.
+
+Future versions can use this data for evaluation and improvement.
+
+The system should not silently train itself on production data.
+
+Feedback should be explicitly stored and governed.
+
+---
+
+# 58. AI Responsibilities
+
+Gemini / the LLM layer is responsible for:
+
+* incident interpretation
+* planning
+* reasoning
+* code analysis
+* hypothesis generation
+* hypothesis critique
+* root-cause explanation
+* remediation proposal
+* PR explanation
+
+The LLM is **not** responsible for:
+
+* authentication
+* authorization
+* durable state
+* repository permissions
+* transaction management
+* job reliability
+* audit trail
+* enforcing approval
+* directly controlling production
+
+The application remains the control plane.
+
+---
+
+# 59. Agent Tool Boundaries
+
+Agents should receive narrowly scoped tools.
+
+Examples:
+
+```text
+get_recent_commits()
+get_commit_diff()
+get_file()
+search_code()
+get_pull_request()
+get_deployment()
+query_metrics()
+query_logs()
+query_traces()
+search_documents()
+search_previous_incidents()
+generate_patch()
+run_tests()
+create_branch()
+create_draft_pr()
+```
+
+Tools should not expose unrestricted system access.
+
+---
+
+# 60. Evaluation Framework
+
+Sentinel must be evaluated as an AI system.
+
+We need benchmark incidents with known causes.
+
+Metrics:
+
+### Detection
+
+* detection latency
+* false-positive rate
+* duplicate incident rate
+
+### Retrieval
+
+* Recall@K
+* Precision@K
+* MRR
+
+### RCA
+
+* root-cause accuracy
+* evidence grounding
+* contradiction detection
+* abstention accuracy
+
+### Remediation
+
+* patch correctness
+* test success
+* regression rate
+
+### Operational
+
+* investigation latency
+* LLM cost
+* tool failure rate
+
+---
+
+# 61. Grounding Evaluation
+
+For every important root-cause claim:
+
+```text
+Does supporting evidence actually exist?
+```
+
+Example:
+
+```text
+Claim:
+Commit abc123 reduced connection pool size.
+
+Evidence:
+abc123 diff.
+
+PASS
+```
+
+If the model says:
+
+```text
+Redis was overloaded
+```
+
+but no evidence shows Redis overload:
+
+```text
+FAIL
+```
+
+---
+
+# 62. MVP Definition
+
+The first serious automatic Sentinel MVP should support:
+
+```text
+1. Production signal ingestion
+2. Automatic incident creation
+3. Service/repository identification
+4. GitHub integration
+5. Recent commit investigation
+6. Code retrieval
+7. Qdrant semantic retrieval
+8. Evidence storage
+9. Competing hypotheses
+10. Root-cause report
+11. Fix generation
+12. Automated tests
+13. Human approval
+14. Draft GitHub PR
+```
+
+It does NOT need every observability vendor.
+
+---
+
+# 63. Development Phases
+
+## Phase 1 — Foundation
+
+Already implemented:
+
+```text
+FastAPI
+PostgreSQL
+JWT
+Incident CRUD
+Repository management
+Next.js UI
+Incident history
+Manual incident form
+Investigation detail
+```
+
+---
+
+## Phase 2 — Infrastructure
+
+Implement:
+
+```text
+PostgreSQL
+Qdrant
+Redis
+Docker Compose
+worker infrastructure
+```
+
+---
+
+## Phase 3 — GitHub Integration
+
+Implement:
+
+```text
+GitHub authentication/integration
+repository discovery
+commits
+diffs
+PRs
+branches
+deployment metadata
+```
+
+---
+
+## Phase 4 — Repository Intelligence
+
+Implement:
+
+```text
+repository ingestion
+code parsing
+code-aware chunking
+embeddings
+Qdrant indexing
+hybrid retrieval
+temporal filtering
+```
+
+---
+
+## Phase 5 — Investigation Engine
+
+Implement:
+
+```text
+investigation planner
+tool execution
+evidence model
+investigation state
+hypothesis generation
+hypothesis critique
+root-cause reasoning
+abstention
+```
+
+---
+
+## Phase 6 — Automatic Detection
+
+Implement initial automatic signal source.
+
+Recommended first controlled source:
+
+```text
+Prometheus / alert webhook
+```
+
+Flow:
+
+```text
+Alert
+ ↓
+Sentinel webhook
+ ↓
+Incident
+ ↓
+Investigation
+```
+
+Add additional providers later.
+
+---
+
+## Phase 7 — Remediation
+
+Implement:
+
+```text
+patch generation
+temporary branch
+test execution
+validation results
+```
+
+---
+
+## Phase 8 — Human Approval + PR
+
+Implement:
+
+```text
+approval UI
+GitHub branch
+commit
+Draft PR
+```
+
+---
+
+## Phase 9 — Evaluation
+
+Build:
+
+```text
+incident benchmark
+retrieval evaluation
+RCA evaluation
+patch evaluation
+abstention evaluation
+cost/latency measurement
+```
+
+---
+
+# 64. Final System Architecture
+
+```text
+                         ┌─────────────────────┐
+                         │      PRODUCTION     │
+                         └──────────┬──────────┘
+                                    │
+                 ┌──────────────────┼──────────────────┐
+                 │                  │                  │
+              Metrics             Logs              Traces
+                 │                  │                  │
+                 └──────────────────┼──────────────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │ Detection Layer     │
+                         └──────────┬──────────┘
+                                    │
+                              Incident
+                              Detected
+                                    │
+                                    ▼
+              ┌─────────────────────────────────────────┐
+              │              INCIDENT MANAGER           │
+              └──────────────────────┬──────────────────┘
+                                     │
+                     ┌───────────────┴───────────────┐
+                     │                               │
+                MANUAL INPUT                    AUTOMATIC INPUT
+                     │                               │
+                     └───────────────┬───────────────┘
+                                     │
+                                     ▼
+                         ┌─────────────────────┐
+                         │ Investigation       │
+                         │ Orchestrator        │
+                         └──────────┬──────────┘
+                                    │
+                         ┌──────────┴──────────┐
+                         │                     │
+                         ▼                     ▼
+                 Scope Discovery         Investigation Plan
+                         │                     │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                       ┌────────────────────────┐
+                       │ Investigation Agents   │
+                       └───────────┬────────────┘
+                                   │
+             ┌─────────────────────┼─────────────────────┐
+             │                     │                     │
+             ▼                     ▼                     ▼
+          GitHub                 Qdrant             Observability
+             │                     │                     │
+         commits                 code                  logs
+         diffs                   docs                  metrics
+         PRs                     runbooks              traces
+         history                 incidents             alerts
+             │                     │                     │
+             └─────────────────────┼─────────────────────┘
+                                   │
+                                   ▼
+                         ┌─────────────────────┐
+                         │ Evidence Engine     │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │ Hypothesis Engine   │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │ Hypothesis Critic   │
+                         └──────────┬──────────┘
+                                    │
+                           ┌────────┴────────┐
+                           │                 │
+                        Evidence          Insufficient
+                        supports            evidence
+                           │                 │
+                           ▼                 ▼
+                       Root Cause         ABSTAIN
+                           │
+                           ▼
+                    ┌─────────────────┐
+                    │ Fix Generator   │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Validation      │
+                    │ Tests / Build   │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Human Approval  │
+                    └────────┬────────┘
+                             │
+                           APPROVE
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ GitHub Branch   │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Commit + Patch  │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Draft GitHub PR │
+                    └─────────────────┘
+```
+
+---
+
+# 65. Final Infrastructure Architecture
+
+```text
+                         SENTINEL
+                            │
+             ┌──────────────┼──────────────┐
+             │              │              │
+             ▼              ▼              ▼
+        PostgreSQL        Qdrant          Redis
+        System of        Semantic       Operational
+         Record          Retrieval        State
+             │              │              │
+             └──────────────┼──────────────┘
+                            │
+                         FastAPI
+                            │
+                  Investigation Workers
+                            │
+                         Gemini
+                            │
+              ┌─────────────┼─────────────┐
+              ▼             ▼             ▼
+           GitHub      Observability   Documents
+```
+
+---
+
+# 66. Final Product Loop
+
+The complete Sentinel product is:
+
+```text
+                         PRODUCTION
+                             │
+                             ▼
+                    Something changes
+                             │
+                             ▼
+                    Sentinel detects it
+                             │
+                             ▼
+                    Incident created
+                             │
+                             ▼
+                 Sentinel investigates
+                             │
+          ┌──────────────────┼──────────────────┐
+          ▼                  ▼                  ▼
+       Production          GitHub            Knowledge
+       Evidence            Evidence          Evidence
+          │                  │                  │
+          └──────────────────┼──────────────────┘
+                             ▼
+                       Hypotheses
+                             │
+                             ▼
+                    Evidence-based RCA
+                             │
+                             ▼
+                     Fix generated
+                             │
+                             ▼
+                       Tests run
+                             │
+                             ▼
+                       Human review
+                             │
+                             ▼
+                    Draft GitHub PR
+```
+
+The manual path simply enters at:
+
+```text
+Manual Error / Logs
+        ↓
+Incident
+```
+
+Everything after that is the same.
+
+---
+
+# 67. Non-Goals for Version 1
+
+Sentinel will NOT initially:
+
+* autonomously merge PRs
+* autonomously deploy to production
+* modify production infrastructure
+* guarantee perfect root-cause identification
+* replace human incident commanders
+* integrate every monitoring vendor
+* search every repository indiscriminately
+* treat LLM output as ground truth
+
+The goal is **high-quality autonomous investigation and safe remediation preparation**, not unrestricted autonomous production control.
+
+---
+
+# 68. Definition of Success
+
+Sentinel succeeds when an engineer can experience this:
+
+```text
+02:13 AM
+
+Production error rate spikes.
+
+Sentinel:
+"Incident detected."
+
+02:14
+
+Sentinel:
+"Investigating payment-api."
+
+02:15
+
+Sentinel:
+"Deployment v2.8.1 occurred 13 minutes before
+the regression."
+
+02:17
+
+Sentinel:
+"4 hypotheses investigated."
+
+02:18
+
+Sentinel:
+"Likely root cause identified:
+connection pool exhaustion."
+
+02:19
+
+Sentinel:
+"Proposed fix generated."
+
+02:20
+
+Sentinel:
+"Unit + integration tests passed."
+
+02:21
+
+Engineer:
+Reviews evidence and diff.
+
+02:22
+
+Engineer:
+Approves.
+
+02:22
+
+Sentinel:
+"Draft PR #481 created."
+```
+
+That is the product we are building.
+
+---
+
+# 69. Final Architectural Decisions
+
+These decisions should be considered **frozen unless we find concrete engineering evidence requiring a change**.
+
+| Decision                       | Choice                               |
+| ------------------------------ | ------------------------------------ |
+| Primary backend                | FastAPI                              |
+| Frontend                       | Next.js + Tailwind                   |
+| Primary database               | PostgreSQL                           |
+| Vector database                | Qdrant                               |
+| Operational store              | Redis                                |
+| AI model                       | Gemini                               |
+| Code source                    | GitHub                               |
+| AI orchestration               | Stateful agent/workflow architecture |
+| Incident modes                 | Manual + Automatic                   |
+| Automatic repository selection | System-inferred                      |
+| Retrieval                      | Hybrid + temporal                    |
+| RCA                            | Competing hypotheses                 |
+| Evidence                       | First-class + provenance             |
+| Remediation                    | AI-generated patch                   |
+| Validation                     | Automated tests/checks               |
+| Approval                       | Human-in-the-loop                    |
+| PR                             | Draft PR                             |
+| Autonomous merge               | No                                   |
+| Production deployment          | No in v1                             |
+
+---
+
+# 70. The Core Architectural Principle
+
+Everything in Sentinel exists to answer one question:
+
+> **Can Sentinel move from "something is wrong" to "here is the most evidence-supported explanation and a validated, reviewable code change" without requiring an engineer to manually perform the investigation?**
+
+If a future feature does not improve:
+
+```text
+Detection
+Investigation
+Evidence
+Reasoning
+Remediation
+Validation
+Safety
+```
+
+it should not be added merely because it is an interesting AI technology.
+
+This is the canonical product direction for Sentinel.

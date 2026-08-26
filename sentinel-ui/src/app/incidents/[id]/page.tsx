@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
+import DiffViewer from "@/components/DiffViewer";
 import { useAuth } from "@/lib/AuthContext";
 import {
   getIncident, updateIncident, deleteIncident, getInvestigation, listEvidence, listHypotheses,
@@ -822,38 +823,45 @@ export default function InvestigationDetail() {
             {/* Proposed Fixes */}
             {fixes.length > 0 && (
               <div className="bg-surface-container-low border border-surface-container-highest rounded p-4">
-                <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant mb-3">
-                  Proposed Fixes ({fixes.length})
-                </h2>
-                <div className="space-y-2">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                    Proposed Fixes ({fixes.length})
+                  </h2>
+                  <span className="text-[10px] text-on-surface-variant italic">
+                    Human Review Gate: Sentinel creates Draft PRs on GitHub — merging is manual
+                  </span>
+                </div>
+                <div className="space-y-4">
                   {fixes.map((fix) => (
                     <div
                       key={fix.id}
-                      className={`p-3 rounded border ${
-                        fix.status === "approved"
+                      className={`p-4 rounded-lg border ${
+                        fix.pr_url
+                          ? "border-primary/30 bg-primary/5"
+                          : fix.status === "approved"
                           ? "border-green-500/30 bg-green-500/5"
                           : fix.status === "rejected"
                           ? "border-error/30 bg-error/5"
-                          : "border-outline-variant"
+                          : "border-outline-variant bg-surface-container"
                       }`}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
-                          <span className="material-symbols-outlined text-[14px] text-primary">
+                          <span className="material-symbols-outlined text-[16px] text-primary">
                             {fix.fix_type === "rollback" ? "replay" : fix.fix_type === "dependency_update" ? "system_update" : "code"}
                           </span>
-                          <span className="text-[12px] font-medium text-on-surface">{fix.title}</span>
+                          <span className="text-[13px] font-semibold text-on-surface">{fix.title}</span>
                         </div>
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${
-                          fix.status === "approved"
-                            ? "bg-green-500/10 text-green-400"
+                        <span className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-semibold ${
+                          fix.pr_url
+                            ? "bg-primary/20 text-primary border border-primary/30"
+                            : fix.status === "approved"
+                            ? "bg-green-500/10 text-green-400 border border-green-500/20"
                             : fix.status === "rejected"
                             ? "bg-error/10 text-error"
-                            : fix.status === "in_progress"
-                            ? "bg-primary/10 text-primary"
-                            : "bg-surface-container-high text-on-surface-variant"
+                            : "bg-surface-container-high text-on-surface-variant border border-outline-variant"
                         }`}>
-                          {fix.status}
+                          {fix.pr_url ? "DRAFT PR ON GITHUB" : fix.status === "approved" ? "READY TO PUBLISH" : "PROPOSED"}
                         </span>
                       </div>
                       <p className="text-[11px] text-on-surface-variant ml-6">{fix.description}</p>
@@ -862,37 +870,44 @@ export default function InvestigationDetail() {
                         {fix.repository && <span>Repository: {fix.repository}</span>}
                         {fix.approach && <span>Approach: {fix.approach}</span>}
                       </div>
-                      {fix.diff && (
-                        <details className="mt-3 ml-6">
-                          <summary className="cursor-pointer text-[11px] text-primary hover:underline">
-                            View proposed code diff
-                          </summary>
-                          <pre className="mt-2 max-h-72 overflow-auto rounded border border-outline-variant bg-surface-container-high p-3 text-[10px] leading-4 text-on-surface whitespace-pre-wrap">
-                            {fix.diff}
-                          </pre>
-                        </details>
+
+                      {/* Rich GitHub-Style Diff Viewer */}
+                      {(fix.diff || fix.patch) && (
+                        <div className="mt-3 ml-6">
+                          <DiffViewer diff={fix.diff || undefined} patch={fix.patch || undefined} />
+                        </div>
                       )}
-                      {fix.pr_url && (
-                        <a
-                          href={fix.pr_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="mt-2 ml-6 inline-block text-[11px] text-primary hover:underline"
-                        >
-                          Open pull request #{fix.pr_number}
-                        </a>
-                      )}
-                      {!fix.pr_url && (
-                        <button
-                          onClick={() => handleCreateDraftPR(fix)}
-                          disabled={prLoading === fix.id}
-                          className="mt-2 ml-6 text-[11px] text-primary hover:underline disabled:opacity-50"
-                        >
-                          {prLoading === fix.id ? "Creating draft PR..." : "Create draft PR"}
-                        </button>
-                      )}
+
+                      <div className="mt-3 ml-6 flex items-center gap-3">
+                        {fix.pr_url ? (
+                          <a
+                            href={fix.pr_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-on-primary text-[11px] font-medium rounded hover:bg-primary/90 transition-colors shadow-sm"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+                            Review Draft PR on GitHub #{fix.pr_number}
+                          </a>
+                        ) : (
+                          <button
+                            onClick={() => handleCreateDraftPR(fix)}
+                            disabled={prLoading === fix.id}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-on-primary text-[11px] font-medium rounded hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-sm"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">
+                              {prLoading === fix.id ? "progress_activity" : "call_split"}
+                            </span>
+                            {prLoading === fix.id ? "Creating Draft PR..." : "Publish Draft PR to GitHub"}
+                          </button>
+                        )}
+                      </div>
+
                       {prError && prLoading === null && (
-                        <div className="mt-2 ml-6 text-[11px] text-error">{prError}</div>
+                        <div className="mt-2 ml-6 text-[11px] text-error flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[13px]">error</span>
+                          <span>{prError}</span>
+                        </div>
                       )}
                     </div>
                   ))}

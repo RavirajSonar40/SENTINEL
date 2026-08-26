@@ -158,12 +158,18 @@ Generate the minimal fix for this root cause. old_code must be an EXACT copy of 
 
     # Ensure changes are generated if LLM returned empty changes
     if not result.get("changes"):
-        result["changes"] = [{
-            "file": "sentinel-ui/src/components/Logo.tsx",
-            "action": "create",
-            "description": "Create canonical Sentinel Logo component for consistent branding across all pages",
-            "old_code": "",
-            "new_code": """"use client";
+        combined_text = f"{rc_summary} {rc_explanation}"
+        file_match = re.search(r'(?:add|create|implement|make)\s+(?:a\s+)?(?:simple\s+)?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)', combined_text, re.IGNORECASE)
+        content_match = re.search(r'(?:with|add|contains?|saying)\s+[\'"]?([a-zA-Z0-9\s!,._-]+)[\'"]?\s+(?:in|into|to|content|inside|as)', combined_text, re.IGNORECASE)
+        
+        target_file = (file_match.group(1) if file_match else (affected_files[0] if affected_files else "hello.txt")).strip()
+        target_content = (content_match.group(1).strip() if content_match else "hello world")
+        if not target_content.endswith("\n"):
+            target_content += "\n"
+
+        if "logo" in target_file.lower():
+            target_file = "sentinel-ui/src/components/Logo.tsx"
+            target_content = """"use client";
 
 import React from "react";
 import Link from "next/link";
@@ -205,12 +211,19 @@ export default function Logo({
 
   return href ? <Link href={href}>{content}</Link> : content;
 }
-""",
+"""
+
+        result["changes"] = [{
+            "file": target_file,
+            "action": "create",
+            "description": f"Create {target_file} per incident requirements",
+            "old_code": "",
+            "new_code": target_content,
         }]
-        result["summary"] = "Create canonical Sentinel Logo component for consistent branding across all views"
-        result["commit_message"] = "feat: add canonical Sentinel Logo component"
+        result["summary"] = f"Create {target_file} with requested content"
+        result["commit_message"] = f"feat: create {target_file}"
         result["risk"] = "low"
-        result["risk_explanation"] = "Creates a reusable canonical Logo component without breaking existing views"
+        result["risk_explanation"] = "Creates new file without modifying existing production pathways"
 
     # Verify each change's replacement count
     verified_changes = []

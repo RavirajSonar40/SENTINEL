@@ -9,15 +9,16 @@ from app.routes.remediation import generate_draft_pr
 
 @pytest.mark.asyncio
 async def test_generate_pr_rejects_unapproved_fix():
-    fix = MagicMock(status="generated")
-    investigation = MagicMock()
+    fix = MagicMock(status="generated", investigation_id="inv-1")
+    investigation = MagicMock(id="inv-1", incident_id="inc-1")
+    incident = MagicMock(id="inc-1", creator_id=None, scopes=[])
     db = MagicMock()
-    db.query.return_value.filter.return_value.first.side_effect = [fix, investigation]
+    db.query.return_value.filter.return_value.first.side_effect = [fix, investigation, incident]
 
     with pytest.raises(HTTPException) as error:
         await generate_draft_pr(
-            MagicMock(investigation_id="investigation", fix_id="fix", branch_name=None),
-            MagicMock(),
+            MagicMock(investigation_id="inv-1", fix_id="fix", branch_name=None),
+            MagicMock(role="admin"),
             db,
         )
 

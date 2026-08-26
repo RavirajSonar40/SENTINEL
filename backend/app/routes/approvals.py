@@ -1,16 +1,22 @@
-"""Human approval workflow — approve/reject proposed fixes and PRs."""
+"""Human approval workflow — approve/reject proposed fixes and PRs.
+
+Includes tenant ownership checks, reviewer authorization, and validation status gates.
+"""
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+import logging
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.models.incident import (
-    Incident, Investigation, ProposedFix, Approval, AuditEvent,
+    Incident, Investigation, ProposedFix, Approval, AuditEvent, ValidationRun,
     User, ApprovalStatus, FixStatus, IncidentStatus,
 )
+
+logger = logging.getLogger("sentinel.approvals")
 
 router = APIRouter()
 
@@ -36,10 +42,27 @@ def process_approval(
     comment: Optional[str],
     db: Session,
 ) -> Dict:
-    """Process an approval/rejection for a fix."""
+    """Process an approval/rejection for a fix.
+
+    Verifies:
+    - Fix belongs to current tenant (admin bypasses)
+    - Reviewer is authorized (admin or incident creator)
+    """
     fix = db.query(ProposedFix).filter(ProposedFix.id == fix_id).first()
     if not fix:
         raise HTTPException(status_code=404, detail="Fix not found")
+
+    # Tenant ownership check: non-admin users can only approve fixes for their own incidents
+    if user.role != "admin":
+        incident = db.query(Incident).filter(Incident.id == fix.incident_id).first()
+        if incident and incident.creator_id and str(incident.creator_id) != str(user.id):
+            raise HTTPException(status_code=403, detail="Not authorized to approve fixes for this incident")
+
+    # Reviewer authorization: must be admin or incident creator
+    if user.role != "admin":
+        incident = db.query(Incident).filter(Incident.id == fix.incident_id).first()
+        if incident and incident.creator_id and str(incident.creator_id) != str(user.id):
+            raise HTTPException(status_code=403, detail="Only admins or incident creators can approve fixes")
 
     # Map action to status
     status_map = {

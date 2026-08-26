@@ -73,12 +73,14 @@ def add_signal_to_incident(
     db: Session = None,
 ) -> IncidentSignal:
     """Add a signal to an existing incident (dedup merge)."""
+    base_fingerprint = compute_fingerprint(title, source=source)
+    fingerprint = f"{base_fingerprint}:{int(datetime.now(timezone.utc).timestamp() * 1000)}"
     signal = IncidentSignal(
         incident_id=incident.id,
         source=source,
         signal_type="webhook",
         content={"title": title, "source_id": source_id, "raw_payload": raw_payload or {}},
-        fingerprint=compute_fingerprint(title, source=source),
+        fingerprint=fingerprint,
     )
     if db:
         db.add(signal)

@@ -257,12 +257,15 @@ def create_incident_from_alert(
         existing.last_signal_at = datetime.now(timezone.utc)
 
         # Add as incident signal
+        fingerprint = alert.external_id or ""
+        if fingerprint:
+            fingerprint = f"{fingerprint}:{int(datetime.now(timezone.utc).timestamp() * 1000)}"
         signal = IncidentSignal(
             incident_id=existing.id,
             source=alert.source,
             signal_type="alert",
             content=alert.title or "",
-            fingerprint=alert.external_id or "",
+            fingerprint=fingerprint,
         )
         db.add(signal)
         db.commit()

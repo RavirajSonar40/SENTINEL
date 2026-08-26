@@ -6,6 +6,7 @@ import asyncio
 from typing import List, Dict, Optional, Any, Callable, Awaitable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from app.services.code_parser import chunk_repository, CodeChunk
 from app.services.retrieval import hybrid_search, build_context_for_investigation
@@ -339,7 +340,9 @@ def _generate_default_tasks(state: InvestigationState) -> List[InvestigationTask
 # --- Execution ---
 
 async def execute_task(task: InvestigationTask) -> Dict:
-    """Execute a single investigation task with retries."""
+    """Execute a single investigation task with exponential backoff retries."""
+    import asyncio as _asyncio
+
     tool = TOOLS.get(task.tool_name)
     if not tool:
         task.status = "failed"
@@ -358,27 +361,78 @@ async def execute_task(task: InvestigationTask) -> Dict:
             if attempt >= task.max_retries:
                 task.status = "failed"
                 return {"error": str(e)}
+            # Exponential backoff: 1s, 2s, 4s, ...
+            delay = min(2 ** attempt, 10)
+            await _asyncio.sleep(delay)
 
     return {"error": task.error}
 
 
-async def run_investigation(state: InvestigationState) -> InvestigationState:
-    """Run a full investigation from planning through execution."""
+async def run_investigation(state: InvestigationState, db=None, investigation_id=None) -> InvestigationState:
+    """Run a full investigation from planning through execution.
+
+    When db and investigation_id are provided, each task is persisted to the
+    investigation_tasks table as it transitions through states.
+    """
+    from app.models.incident import InvestigationTask as InvestigationTaskModel, TaskStatus
+
     state.status = "planning"
 
     # 1. Plan tasks (LLM-powered)
     tasks = await generate_tasks_llm(state)
+
+    # Persist planned tasks to DB
+    db_task_map = {}  # in-memory task id -> DB row
+    if db and investigation_id:
+        for idx, task in enumerate(tasks):
+            db_task = InvestigationTaskModel(
+                id=uuid4(),
+                investigation_id=investigation_id,
+                task_type=task.task_type,
+                description=task.description,
+                status=TaskStatus.PENDING.value,
+                order=idx,
+                tool_name=task.tool_name,
+                tool_input=task.parameters,
+                max_attempts=task.max_retries + 1,
+            )
+            db.add(db_task)
+            db_task_map[task.id] = db_task
+        db.flush()
 
     # 2. Execute tasks in parallel batches
     state.status = "investigating"
     search_tasks = [t for t in tasks if t.task_type in ("search", "symbol", "code", "logs")]
     other_tasks = [t for t in tasks if t.task_type not in ("search", "symbol", "code", "logs")]
 
+    # Mark search tasks as running
+    if db and investigation_id:
+        for task in search_tasks:
+            if task.id in db_task_map:
+                db_task_map[task.id].status = TaskStatus.RUNNING.value
+                db_task_map[task.id].started_at = datetime.now(timezone.utc)
+        db.flush()
+
     # Execute search tasks first (parallel)
     search_results = await asyncio.gather(
         *[execute_task(t) for t in search_tasks],
         return_exceptions=True,
     )
+
+    # Persist search task results
+    if db and investigation_id:
+        for task, result in zip(search_tasks, search_results):
+            if task.id in db_task_map:
+                db_task = db_task_map[task.id]
+                db_task.attempt = task.retry_count
+                if isinstance(result, Exception):
+                    db_task.status = TaskStatus.FAILED.value
+                    db_task.error_message = str(result)
+                else:
+                    db_task.status = TaskStatus.COMPLETED.value
+                    db_task.tool_output = result if isinstance(result, dict) else {"result": str(result)}
+                db_task.completed_at = datetime.now(timezone.utc)
+        db.flush()
 
     # Collect evidence from search results
     for i, (task, result) in enumerate(zip(search_tasks, search_results)):
@@ -408,11 +462,35 @@ async def run_investigation(state: InvestigationState) -> InvestigationState:
             if state.evidence_collected:
                 task.parameters["file_path"] = state.evidence_collected[0].get("file", "")
 
+    # Mark remaining tasks as running
+    if db and investigation_id:
+        for task in other_tasks:
+            if task.id in db_task_map:
+                db_task_map[task.id].status = TaskStatus.RUNNING.value
+                db_task_map[task.id].started_at = datetime.now(timezone.utc)
+                db_task_map[task.id].tool_input = task.parameters
+        db.flush()
+
     # Execute remaining tasks (parallel)
     remaining_results = await asyncio.gather(
         *[execute_task(t) for t in other_tasks],
         return_exceptions=True,
     )
+
+    # Persist remaining task results
+    if db and investigation_id:
+        for task, result in zip(other_tasks, remaining_results):
+            if task.id in db_task_map:
+                db_task = db_task_map[task.id]
+                db_task.attempt = task.retry_count
+                if isinstance(result, Exception):
+                    db_task.status = TaskStatus.FAILED.value
+                    db_task.error_message = str(result)
+                else:
+                    db_task.status = TaskStatus.COMPLETED.value
+                    db_task.tool_output = result if isinstance(result, dict) else {"result": str(result)}
+                db_task.completed_at = datetime.now(timezone.utc)
+        db.flush()
 
     for task, result in zip(other_tasks, remaining_results):
         if isinstance(result, Exception):

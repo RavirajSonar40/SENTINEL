@@ -95,7 +95,7 @@ async def trigger_investigation(
     )
 
     # Run investigation engine
-    state = await run_engine(state)
+    state = await run_engine(state, db=db, investigation_id=investigation.id)
 
     # Persist evidence
     evidence_count = 0

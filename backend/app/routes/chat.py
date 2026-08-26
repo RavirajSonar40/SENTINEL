@@ -33,65 +33,77 @@ def build_context(db: Session, user_id) -> str:
     """Build context scoped to the authenticated user's incidents, investigations, and PRs."""
     parts = []
 
-    # Get user's incident IDs (admin sees all)
-    user = db.query(User).filter(User.id == user_id).first()
-    if user and user.role == "admin":
-        incident_ids = [str(i.id) for i in db.query(Incident.id).all()]
-    else:
-        incident_ids = [str(i.id) for i in db.query(Incident.id).filter(Incident.creator_id == user_id).all()]
+    try:
+        # Get user's incidents (admin sees all)
+        user = db.query(User).filter(User.id == user_id).first()
+        if user and user.role == "admin":
+            incidents = db.query(Incident).order_by(Incident.created_at.desc()).limit(10).all()
+        else:
+            incidents = db.query(Incident).filter(Incident.creator_id == user_id).order_by(Incident.created_at.desc()).limit(10).all()
 
-    if not incident_ids:
-        return "No incidents, investigations, or fixes found yet. The system is ready to investigate production issues."
-
-    # Investigations scoped to user's incidents
-    investigations = db.query(Investigation).filter(
-        Investigation.incident_id.in_(incident_ids)
-    ).order_by(Investigation.created_at.desc()).limit(5).all()
-    for inv in investigations:
-        inc = db.query(Incident).filter(Incident.id == inv.incident_id).first()
-        parts.append(
-            f"Investigation {str(inv.id)[:8]}: incident={inc.title if inc else 'unknown'}, "
-            f"status={inv.status}, root_cause_found={inv.root_cause_found}, "
-            f"confidence={inv.confidence}"
-        )
-
-    # Evidence citations (top 5 per investigation)
-    for inv in investigations[:3]:
-        evidence_rows = db.query(Evidence).filter(
-            Evidence.investigation_id == inv.id
-        ).order_by(Evidence.relevance_score.desc()).limit(5).all()
-        for ev in evidence_rows:
+        for inc in incidents:
             parts.append(
-                f"Evidence [{ev.source_type}] in {str(inv.id)[:8]}: {ev.title} "
-                f"(score: {ev.relevance_score}, file: {ev.file_path or 'N/A'})"
+                f"Incident #{inc.number}: {inc.title} (status={inc.status}, severity={inc.severity})"
             )
 
-    # Root causes
-    root_causes = db.query(RootCause).filter(
-        RootCause.investigation_id.in_([str(inv.id) for inv in investigations])
-    ).all()
-    for rc in root_causes:
-        parts.append(
-            f"Root Cause [{str(rc.investigation_id)[:8]}]: {rc.summary} "
-            f"(confidence: {rc.confidence}, component: {rc.affected_component})"
-        )
+        if not incidents:
+            return "No incidents found yet. The system is ready to investigate production issues."
 
-    # Proposed fixes scoped to user's investigations
-    fixes = db.query(ProposedFix).filter(
-        ProposedFix.investigation_id.in_([str(inv.id) for inv in investigations])
-    ).order_by(ProposedFix.created_at.desc()).limit(5).all()
-    for fix in fixes:
-        parts.append(
-            f"Proposed Fix {str(fix.id)[:8]}: title={fix.title}, "
-            f"status={fix.status}, type={fix.fix_type}, "
-            f"description={fix.description[:200] if fix.description else 'N/A'}"
-        )
+        incident_ids = [str(i.id) for i in incidents]
 
-    # Connected repositories
-    repos = db.query(Repository).filter(Repository.owner_id == user_id).all()
-    if repos:
-        repo_names = [r.full_name for r in repos[:10]]
-        parts.append(f"Connected repositories: {', '.join(repo_names)}")
+        # Investigations
+        investigations = db.query(Investigation).filter(
+            Investigation.incident_id.in_(incident_ids)
+        ).order_by(Investigation.created_at.desc()).limit(5).all()
+        for inv in investigations:
+            parts.append(
+                f"Investigation {str(inv.id)[:8]}: status={inv.status}, root_cause_found={inv.root_cause_found}, confidence={inv.confidence}"
+            )
+
+        # Evidence citations
+        for inv in investigations[:3]:
+            try:
+                evidence_rows = db.query(Evidence).filter(
+                    Evidence.investigation_id == inv.id
+                ).order_by(Evidence.relevance_score.desc()).limit(5).all()
+                for ev in evidence_rows:
+                    parts.append(
+                        f"Evidence [{ev.source_type}] in {str(inv.id)[:8]}: {ev.title} "
+                        f"(score: {ev.relevance_score}, file: {ev.file_path or 'N/A'})"
+                    )
+            except Exception:
+                pass
+
+        # Root causes
+        try:
+            root_causes = db.query(RootCause).filter(
+                RootCause.investigation_id.in_([str(inv.id) for inv in investigations])
+            ).all()
+            for rc in root_causes:
+                parts.append(
+                    f"Root Cause [{str(rc.investigation_id)[:8]}]: {rc.summary} "
+                    f"(confidence: {rc.confidence}, component: {rc.affected_component})"
+                )
+        except Exception:
+            pass
+
+        # Proposed fixes
+        try:
+            fixes = db.query(ProposedFix).filter(
+                ProposedFix.investigation_id.in_([str(inv.id) for inv in investigations])
+            ).order_by(ProposedFix.created_at.desc()).limit(5).all()
+            for fix in fixes:
+                parts.append(
+                    f"Proposed Fix {str(fix.id)[:8]}: title={fix.title}, "
+                    f"status={fix.status}, type={fix.fix_type}, "
+                    f"description={fix.description[:200] if fix.description else 'N/A'}"
+                )
+        except Exception:
+            pass
+
+    except Exception as e:
+        logger.error(f"build_context error: {e}")
+        return "Context unavailable due to a query error."
 
     return "\n".join(parts)
 

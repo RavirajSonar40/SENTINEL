@@ -760,13 +760,19 @@ export default function InvestigationDetail() {
                               <div className="text-[11px] text-on-surface-variant mt-0.5 font-mono">
                                 {typeof s.detail === "string" ? s.detail : Array.isArray(s.detail) ? (
                                   <div className="flex flex-wrap gap-1 mt-1">
-                                    {s.detail.map((d: string, j: number) => (
-                                      <span key={j} className="px-1.5 py-0.5 bg-surface-container-high rounded text-[10px]">{d}</span>
+                                    {s.detail.map((d: unknown, j: number) => (
+                                      <span key={j} className="px-1.5 py-0.5 bg-surface-container-high rounded text-[10px]">
+                                        {typeof d === "string" ? d : typeof d === "object" && d !== null ? (d as Record<string, unknown>).label || (d as Record<string, unknown>).title || JSON.stringify(d) : String(d)}
+                                      </span>
                                     ))}
                                   </div>
-                                ) : (
-                                  <pre className="whitespace-pre-wrap text-[10px]">{JSON.stringify(s.detail, null, 2)}</pre>
-                                )}
+                                ) : typeof s.detail === "object" && s.detail !== null ? (
+                                  <div className="mt-1 space-y-0.5">
+                                    {Object.entries(s.detail as Record<string, unknown>).map(([k, v]) => (
+                                      <div key={k}><span className="text-on-surface-variant">{k}:</span> {typeof v === "string" ? v : typeof v === "object" ? JSON.stringify(v) : String(v ?? "")}</div>
+                                    ))}
+                                  </div>
+                                ) : null}
                               </div>
                             )}
                           </div>

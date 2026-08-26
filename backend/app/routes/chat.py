@@ -8,6 +8,7 @@ import logging
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.core.config import Settings
+from app.services.security import validate_input
 from app.models.incident import User, Incident, Investigation, ProposedFix, Repository
 
 logger = logging.getLogger(__name__)
@@ -272,6 +273,12 @@ async def chat(
 ):
     context = build_context(db, current_user.id)
     history = [ChatMessage(role=m.role, content=m.content) for m in request.history]
+
+    # Sanitize user input for prompt injection
+    validation = validate_input(request.message)
+    if not validation["safe"]:
+        logger.warning(f"Prompt injection detected from user {current_user.id}")
+        return ChatResponse(response="I can't process that request. Please rephrase your question.")
 
     try:
         response = await call_llm(request.message, context, history)

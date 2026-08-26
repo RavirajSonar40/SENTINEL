@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
@@ -6,6 +6,7 @@ from uuid import UUID
 
 from app.core.database import get_db
 from app.core.auth import hash_password, verify_password, create_access_token, get_current_user
+from app.core.rate_limit import limiter
 from app.models.incident import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -36,7 +37,8 @@ class TokenResponse(BaseModel):
 
 
 @router.post("/register", response_model=TokenResponse)
-def register(payload: UserCreate, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def register(request: Request, payload: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(User).filter(
         (User.username == payload.username) | (User.email == payload.email)
     ).first()
@@ -61,7 +63,8 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: UserLogin, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == payload.username).first()
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")

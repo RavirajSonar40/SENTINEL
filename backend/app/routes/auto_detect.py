@@ -233,7 +233,18 @@ def auto_create_incident(
         "SEV-4": IncidentSeverity.SEV4,
     }
 
+    from sqlalchemy import text
+    try:
+        next_number = db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
+    except Exception:
+        db.rollback()
+        max_num = db.execute(text("SELECT COALESCE(MAX(number), 0) FROM incidents")).scalar()
+        db.execute(text(f"CREATE SEQUENCE IF NOT EXISTS incident_number_seq START WITH {max_num + 1}"))
+        db.flush()
+        next_number = db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
+
     incident = Incident(
+        number=next_number,
         title=title,
         description=description,
         severity=severity_map.get(severity, IncidentSeverity.SEV3),

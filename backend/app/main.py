@@ -1,8 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 import os
 
 from app.core.database import engine, Base
+from app.core.rate_limit import limiter
 from app.routes import auth_router, incidents_router, repositories_router, health_router, investigations_router, github_router
 from app.routes.investigation_engine import router as engine_router
 from app.routes.indexing import router as indexing_router
@@ -26,6 +30,8 @@ app = FastAPI(
     description="AI Incident Response Agent — Backend",
     version="0.1.0",
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS — allow frontend origins
 frontend_url = settings.FRONTEND_URL
@@ -70,6 +76,8 @@ async def startup_event():
             conn.execute(text("ALTER TABLE repositories ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP WITH TIME ZONE"))
             conn.execute(text("ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS repository VARCHAR(500)"))
             conn.execute(text("ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS patch_json JSONB"))
+            max_num = conn.execute(text("SELECT COALESCE(MAX(number), 0) FROM incidents")).scalar()
+            conn.execute(text(f"CREATE SEQUENCE IF NOT EXISTS incident_number_seq START WITH {max_num + 1}"))
             conn.commit()
         except Exception:
             pass

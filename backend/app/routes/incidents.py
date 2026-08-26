@@ -7,6 +7,7 @@ from datetime import datetime
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
+from app.services.security import validate_input
 from app.models.incident import (
     Incident, IncidentStatus, IncidentSeverity, IncidentSource,
     Repository, RepositoryScope, User, Service,
@@ -75,8 +76,16 @@ class IncidentOut(BaseModel):
 # --- Endpoints ---
 
 def _get_next_incident_number(db: Session) -> int:
-    last = db.query(Incident).order_by(Incident.number.desc()).first()
-    return (last.number + 1) if last else 1
+    from sqlalchemy import text
+    try:
+        result = db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
+        return result
+    except Exception:
+        db.rollback()
+        max_num = db.execute(text("SELECT COALESCE(MAX(number), 0) FROM incidents")).scalar()
+        db.execute(text(f"CREATE SEQUENCE IF NOT EXISTS incident_number_seq START WITH {max_num + 1}"))
+        db.flush()
+        return db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
 
 
 @router.post("", response_model=IncidentOut)
@@ -85,6 +94,12 @@ def create_incident(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Validate inputs for prompt injection
+    for field_val in [payload.title, payload.description or ""]:
+        validation = validate_input(field_val)
+        if not validation["safe"]:
+            raise HTTPException(status_code=400, detail="Input contains potentially unsafe content. Please rephrase.")
+
     incident = Incident(
         number=_get_next_incident_number(db),
         title=payload.title,
@@ -130,6 +145,8 @@ def list_incidents(
     current_user: User = Depends(get_current_user),
 ):
     query = db.query(Incident)
+    if current_user.role != "admin":
+        query = query.filter(Incident.creator_id == current_user.id)
     if status:
         query = query.filter(Incident.status == status)
     if severity:
@@ -149,6 +166,8 @@ def get_incident(
     incident = db.query(Incident).filter(Incident.id == UUID(incident_id)).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+    if current_user.role != "admin" and incident.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
     return _incident_to_out(incident, db)
 
 
@@ -162,8 +181,18 @@ def update_incident(
     incident = db.query(Incident).filter(Incident.id == UUID(incident_id)).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+    if current_user.role != "admin" and incident.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    # Validate user-provided fields for prompt injection
+    updates = payload.model_dump(exclude_unset=True)
+    for field in ["title", "description"]:
+        if field in updates and updates[field]:
+            validation = validate_input(str(updates[field]))
+            if not validation["safe"]:
+                raise HTTPException(status_code=400, detail=f"Input for '{field}' contains potentially unsafe content. Please rephrase.")
+
+    for field, value in updates.items():
         if field == "service":
             setattr(incident, "service_name", value)
         else:
@@ -184,6 +213,8 @@ def delete_incident(
     incident = db.query(Incident).filter(Incident.id == UUID(incident_id)).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+    if current_user.role != "admin" and incident.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     db.delete(incident)
     db.commit()

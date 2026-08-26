@@ -7,10 +7,13 @@ from pydantic import BaseModel
 from typing import Optional, List
 from uuid import UUID
 import httpx
+import hmac
+import hashlib
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.models.incident import (
     User, Repository, GitHubInstallation, GitHubRepositorySync,
     GitHubWebhookEvent,
@@ -579,6 +582,7 @@ async def get_pull_request(
 # --- Webhook ---
 
 @router.post("/webhook")
+@limiter.limit("60/minute")
 async def github_webhook(
     request: Request,
     db: Session = Depends(get_db),
@@ -593,6 +597,16 @@ async def github_webhook(
 
     body = await request.body()
     payload = await request.json()
+
+    # Verify HMAC signature if webhook secret is configured
+    if settings.GITHUB_WEBHOOK_SECRET and settings.GITHUB_WEBHOOK_SECRET != "your-webhook-secret":
+        if not signature:
+            raise HTTPException(400, "Missing webhook signature")
+        expected = "sha256=" + hmac.new(
+            settings.GITHUB_WEBHOOK_SECRET.encode(), body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            raise HTTPException(403, "Invalid webhook signature")
 
     # Store webhook event
     event = GitHubWebhookEvent(

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.rate_limit import limiter
 from app.models.incident import (
     Incident, IncidentStatus, IncidentSeverity, IncidentSource,
     User, Service, IncidentSignal,
@@ -284,8 +285,15 @@ def create_incident_from_alert(
     }
 
     # Auto-generate incident number
-    last = db.query(Incident).order_by(Incident.number.desc()).first()
-    next_number = (last.number + 1) if last else 1
+    from sqlalchemy import text
+    try:
+        next_number = db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
+    except Exception:
+        db.rollback()
+        max_num = db.execute(text("SELECT COALESCE(MAX(number), 0) FROM incidents")).scalar()
+        db.execute(text(f"CREATE SEQUENCE IF NOT EXISTS incident_number_seq START WITH {max_num + 1}"))
+        db.flush()
+        next_number = db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
 
     incident = Incident(
         number=next_number,
@@ -323,6 +331,7 @@ def create_incident_from_alert(
 # --- Webhook Endpoints ---
 
 @router.post("/webhooks/pagerduty")
+@limiter.limit("30/minute")
 async def receive_pagerduty(request: Request, db: Session = Depends(get_db)):
     """Receive PagerDuty webhook."""
     payload = await request.json()
@@ -333,6 +342,7 @@ async def receive_pagerduty(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/webhooks/datadog")
+@limiter.limit("30/minute")
 async def receive_datadog(request: Request, db: Session = Depends(get_db)):
     """Receive Datadog alert webhook."""
     payload = await request.json()
@@ -343,6 +353,7 @@ async def receive_datadog(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/webhooks/sentry")
+@limiter.limit("30/minute")
 async def receive_sentry(request: Request, db: Session = Depends(get_db)):
     """Receive Sentry webhook."""
     payload = await request.json()
@@ -353,6 +364,7 @@ async def receive_sentry(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/webhooks/slack")
+@limiter.limit("30/minute")
 async def receive_slack(request: Request, db: Session = Depends(get_db)):
     """Receive Slack alert."""
     payload = await request.json()
@@ -363,6 +375,7 @@ async def receive_slack(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/webhooks/generic")
+@limiter.limit("30/minute")
 async def receive_generic(request: Request, db: Session = Depends(get_db)):
     """Receive generic webhook — auto-detects source from payload."""
     payload = await request.json()

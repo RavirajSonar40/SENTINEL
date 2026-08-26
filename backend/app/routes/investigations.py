@@ -13,8 +13,17 @@ from app.models.incident import (
     Hypothesis, HypothesisEvidence, HypothesisStatus, Confidence,
     RootCause,
     ProposedFix, FixFile, ValidationRun, ValidationStatus,
-    AuditEvent, User,
+    AuditEvent, User, Incident,
 )
+
+
+def _check_investigation_access(inv: Investigation, user: User, db: Session):
+    """Raise 403 if user is not admin and doesn't own the investigation's incident."""
+    if user.role == "admin":
+        return
+    incident = db.query(Incident).filter(Incident.id == inv.incident_id).first()
+    if not incident or incident.creator_id != user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
 router = APIRouter(prefix="/investigations", tags=["investigations"])
 
@@ -152,6 +161,7 @@ def get_investigation(
     inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    _check_investigation_access(inv, current_user, db)
     return _inv_to_out(inv)
 
 
@@ -161,6 +171,10 @@ def list_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    _check_investigation_access(inv, current_user, db)
     tasks = db.query(InvestigationTask).filter(
         InvestigationTask.investigation_id == UUID(investigation_id)
     ).order_by(InvestigationTask.order).all()
@@ -176,6 +190,10 @@ def list_evidence(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    _check_investigation_access(inv, current_user, db)
     query = db.query(Evidence).filter(Evidence.investigation_id == UUID(investigation_id))
     if source_type:
         query = query.filter(Evidence.source_type == source_type)
@@ -219,6 +237,10 @@ def list_hypotheses(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    _check_investigation_access(inv, current_user, db)
     hyps = db.query(Hypothesis).filter(
         Hypothesis.investigation_id == UUID(investigation_id)
     ).order_by(Hypothesis.label).all()
@@ -251,6 +273,10 @@ def get_root_cause(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    _check_investigation_access(inv, current_user, db)
     rc = db.query(RootCause).filter(
         RootCause.investigation_id == UUID(investigation_id)
     ).first()
@@ -267,6 +293,10 @@ def list_fixes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    _check_investigation_access(inv, current_user, db)
     fixes = db.query(ProposedFix).join(RootCause).filter(
         RootCause.investigation_id == UUID(investigation_id)
     ).all()

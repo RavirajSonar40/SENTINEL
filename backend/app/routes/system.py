@@ -58,7 +58,11 @@ _settings: Dict[str, Any] = {
 
 @router.get("/settings")
 def get_settings(current_user: User = Depends(get_current_user)):
-    return _settings
+    safe = {k: v for k, v in _settings.items()}
+    if "llm_api_key" in safe and safe["llm_api_key"]:
+        key = safe["llm_api_key"]
+        safe["llm_api_key"] = key[:4] + "****" + key[-4:] if len(key) > 8 else "****"
+    return safe
 
 
 @router.put("/settings")
@@ -78,7 +82,13 @@ def update_settings(
         _settings["auto_merge"] = payload.auto_merge
     if payload.notification_email is not None:
         _settings["notification_email"] = payload.notification_email
-    return {"status": "ok", "settings": _settings}
+
+    # Mask API key in response
+    safe = {k: v for k, v in _settings.items()}
+    if "llm_api_key" in safe and safe["llm_api_key"]:
+        key = safe["llm_api_key"]
+        safe["llm_api_key"] = key[:4] + "****" + key[-4:] if len(key) > 8 else "****"
+    return {"status": "ok", "settings": safe}
 
 
 # --- Alert Rules ---

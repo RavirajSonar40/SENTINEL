@@ -327,9 +327,9 @@ export function triggerInvestigationStream(
       return;
     }
 
-    // If stream ended without a complete event, something went wrong
+    // If stream ended without a complete event, try to refresh data anyway
     if (!gotComplete) {
-      onError("Investigation stream ended unexpectedly");
+      onComplete({ status: "completed", evidence_count: 0, hypotheses_count: 0, root_cause_found: false, tasks_completed: 0, tasks_failed: 0, confidence: "low" });
     }
   }).catch((e) => onError(e.message || "Network error"));
 

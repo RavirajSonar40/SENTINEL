@@ -521,8 +521,14 @@ async def _stream_investigation(
         })
 
     except Exception as e:
-        yield emit("error", {"message": str(e)})
-        db.rollback()
+        try:
+            yield emit("error", {"message": str(e)[:500]})
+        except Exception:
+            pass
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 @router.post("/investigate/stream")

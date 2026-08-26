@@ -65,6 +65,16 @@ class GitHubClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def get_file(self, owner: str, repo: str, path: str, ref: Optional[str] = None) -> dict:
+        """Get file content from GitHub repository."""
+        params = {}
+        if ref:
+            params["ref"] = ref
+        async with self._client() as client:
+            resp = await client.get(f"/repos/{owner}/{repo}/contents/{path}", params=params)
+            resp.raise_for_status()
+            return resp.json()
+
     async def get_commit_diff(self, owner: str, repo: str, sha: str) -> str:
         async with httpx.AsyncClient(base_url=GITHUB_API, headers={
             **self.headers,

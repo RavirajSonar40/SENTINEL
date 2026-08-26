@@ -158,20 +158,27 @@ Generate the minimal fix for this root cause. old_code must be an EXACT copy of 
     rejected_changes = []
     for change in result.get("changes", []):
         fpath = change.get("file", "")
+        action = change.get("action", "modify")
         old_code = change.get("old_code", "")
         new_code = change.get("new_code", "")
 
-        if not old_code or not new_code:
-            rejected_changes.append({**change, "rejection_reason": "empty old_code or new_code"})
+        if not new_code:
+            rejected_changes.append({**change, "rejection_reason": "empty new_code"})
+            continue
+
+        if action == "create":
+            change["patched_content"] = new_code
+            change["original_content"] = ""
+            verified_changes.append(change)
+            continue
+
+        if not old_code:
+            rejected_changes.append({**change, "rejection_reason": "empty old_code for modify action"})
             continue
 
         file_content = file_contents.get(fpath, "")
         if not file_content:
-            # Can't verify — might be a new file
-            if change.get("action") == "create":
-                verified_changes.append(change)
-            else:
-                rejected_changes.append({**change, "rejection_reason": "file not available for verification"})
+            rejected_changes.append({**change, "rejection_reason": "file not available for verification"})
             continue
 
         is_safe, count = verify_replacement_count(old_code, file_content)
@@ -184,7 +191,7 @@ Generate the minimal fix for this root cause. old_code must be an EXACT copy of 
         else:
             rejected_changes.append({
                 **change,
-                "rejection_reason": f"unsafe: old_code appears {count} times (must be exactly 1)",
+                "rejection_reason": f"old_code matches {count} times (must be exactly 1)",
             })
             logger.warning(f"Rejected patch for {fpath}: old_code appears {count} times")
 
@@ -193,7 +200,7 @@ Generate the minimal fix for this root cause. old_code must be an EXACT copy of 
     for change in verified_changes:
         old = change.get("original_content", "")
         new = change.get("patched_content", "")
-        if old and new:
+        if new:
             diff = generate_diff(old, new, change.get("file", ""))
             change["diff"] = diff
             diffs.append(diff)

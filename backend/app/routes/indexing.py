@@ -88,6 +88,7 @@ async def _scan_github_repo(repository: str, branch: str = "main", github_token:
         logger.warning("No GitHub token — cannot index GitHub repository")
         return files
 
+    logger.info(f"Scanning GitHub repo {repository} (branch={branch}, token_len={len(github_token)})")
     client = GitHubClient(token=github_token)
     owner, repo = repository.split("/", 1)
 
@@ -99,7 +100,9 @@ async def _scan_github_repo(repository: str, branch: str = "main", github_token:
                 logger.warning(f"GitHub tree API returned {tree_resp.status_code} for {repository}")
                 return files
             tree = tree_resp.json()
-            for item in tree.get("tree", []):
+            tree_items = tree.get("tree", [])
+            logger.info(f"Got {len(tree_items)} tree items for {repository}")
+            for item in tree_items:
                 if item["type"] != "blob":
                     continue
                 path = item["path"]
@@ -180,12 +183,22 @@ async def index_repository(
         files = _scan_directory(request.local_path)
     elif request.repository and "/" in request.repository:
         # Index from GitHub repository — get user's token by repo owner
+        import logging
+        _logger = logging.getLogger("sentinel.indexing")
         from app.models.incident import GitHubInstallation
         repo_owner = request.repository.split("/")[0]
+        _logger.info(f"Looking up GitHub installation for owner={repo_owner}")
         installation = db.query(GitHubInstallation).filter(
             GitHubInstallation.account_login == repo_owner,
         ).first()
-        user_token = installation.tokens_encrypted if installation else None
+        if installation:
+            user_token = installation.tokens_encrypted
+            _logger.info(f"Found installation for {repo_owner}, token={'set' if user_token else 'EMPTY'}")
+        else:
+            # Fallback: get any installation
+            all_inst = db.query(GitHubInstallation).all()
+            _logger.warning(f"No installation for owner={repo_owner}, total installations={len(all_inst)}: {[(i.account_login, bool(i.tokens_encrypted)) for i in all_inst]}")
+            user_token = all_inst[0].tokens_encrypted if all_inst else None
         files = await _scan_github_repo(request.repository, github_token=user_token)
     elif request.file_paths:
         # Index specific files

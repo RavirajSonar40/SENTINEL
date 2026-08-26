@@ -82,10 +82,7 @@ def ensure_collection():
 
 def upsert_chunks(chunks: List[Dict]) -> int:
     """Index code chunks. Returns count indexed."""
-    texts = [c["content"][:1500] for c in chunks]
-    embeddings = embed_texts(texts)
-
-    # Try Pinecone first
+    # Try Pinecone first (integrated embedding — sends raw text)
     index = _get_pinecone()
     if index:
         try:
@@ -93,7 +90,7 @@ def upsert_chunks(chunks: List[Dict]) -> int:
             for i, chunk in enumerate(chunks):
                 vectors.append({
                     "id": str(uuid.uuid5(uuid.NAMESPACE_URL, chunk.get("id", str(i)))),
-                    "values": embeddings[i],
+                    "text": chunk["content"][:1500],
                     "metadata": {
                         "file_path": chunk.get("file_path", ""),
                         "chunk_type": chunk.get("chunk_type", ""),
@@ -113,6 +110,10 @@ def upsert_chunks(chunks: List[Dict]) -> int:
             return len(vectors)
         except Exception as e:
             logger.warning(f"Pinecone upsert failed: {e}")
+
+    # Fallback to Qdrant (pre-computed embeddings)
+    texts = [c["content"][:1500] for c in chunks]
+    embeddings = embed_texts(texts)
 
     # Fallback to Qdrant
     client = _get_qdrant()

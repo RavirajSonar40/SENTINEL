@@ -762,7 +762,7 @@ export default function InvestigationDetail() {
                                   <div className="flex flex-wrap gap-1 mt-1">
                                     {s.detail.map((d: unknown, j: number) => (
                                       <span key={j} className="px-1.5 py-0.5 bg-surface-container-high rounded text-[10px]">
-                                        {typeof d === "string" ? d : typeof d === "object" && d !== null ? (d as Record<string, unknown>).label || (d as Record<string, unknown>).title || JSON.stringify(d) : String(d)}
+                                        {String(typeof d === "string" ? d : typeof d === "object" && d !== null ? ((d as Record<string, unknown>).label || (d as Record<string, unknown>).title || JSON.stringify(d)) : d)}
                                       </span>
                                     ))}
                                   </div>

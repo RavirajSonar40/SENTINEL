@@ -530,13 +530,27 @@ async def _stream_investigation(
                         fix_file = FixFile(fix_id=fix_model.id, file_path=file_path, change_type="modify")
                         persist_db.add(fix_file)
 
-            from sqlalchemy import text
-            new_status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
-            inc_status = IncidentStatus.ROOT_CAUSE_IDENTIFIED.value if root_cause_found else IncidentStatus.ROOT_CAUSE_ANALYSIS.value
-            persist_db.execute(text("UPDATE investigations SET status=:s, confidence=:c, current_step=:step, progress_percent=100, completed_at=NOW() WHERE id=:id"),
-                               {"s": new_status, "c": state.confidence, "step": "Complete", "id": str(inv_id)})
-            persist_db.execute(text("UPDATE incidents SET status=:s WHERE id=:id"),
-                               {"s": inc_status, "id": str(inc_id)})
+            investigation_record = persist_db.query(Investigation).filter(
+                Investigation.id == inv_id
+            ).first()
+            incident_record = persist_db.query(Incident).filter(
+                Incident.id == inc_id
+            ).first()
+            if not investigation_record or not incident_record:
+                raise RuntimeError("Investigation records disappeared before results could be saved")
+
+            investigation_record.status = (
+                InvestigationStatus.ROOT_CAUSE_ANALYSIS
+                if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE
+            )
+            investigation_record.confidence = state.confidence
+            investigation_record.current_step = "Complete"
+            investigation_record.progress_percent = 100
+            investigation_record.completed_at = datetime.now(timezone.utc)
+            incident_record.status = (
+                IncidentStatus.ROOT_CAUSE_IDENTIFIED
+                if root_cause_found else IncidentStatus.ROOT_CAUSE_ANALYSIS
+            )
             persist_db.commit()
         except Exception as persist_err:
             try:
@@ -560,6 +574,20 @@ async def _stream_investigation(
         })
 
     except Exception as e:
+        try:
+            from app.core.database import SessionLocal
+            failed_db = SessionLocal()
+            failed_investigation = failed_db.query(Investigation).filter(
+                Investigation.id == inv_id
+            ).first()
+            if failed_investigation:
+                failed_investigation.status = InvestigationStatus.FAILED
+                failed_investigation.current_step = "Investigation failed"
+                failed_investigation.completed_at = datetime.now(timezone.utc)
+                failed_db.commit()
+            failed_db.close()
+        except Exception:
+            pass
         try:
             yield emit("error", {"message": str(e)[:500]})
         except Exception:

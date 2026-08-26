@@ -297,7 +297,7 @@ export default function InvestigationDetail() {
           {/* Right Column - Investigation Details */}
           <div className="flex-1 flex flex-col gap-1 min-w-0">
             {/* Run AI Investigation Button */}
-            {(!investigation || ["created", "planning", "investigating"].includes(investigation.status)) && (
+            {(!investigation || ["created", "planning", "investigating", "failed"].includes(investigation.status)) && (
               <div className="bg-primary/5 border border-primary/20 rounded p-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -364,6 +364,11 @@ export default function InvestigationDetail() {
                       </div>
                       <div className="text-on-surface-variant">{engineResult.message}</div>
                     </div>
+                  </div>
+                )}
+                {streamError && (
+                  <div className="mt-3 p-3 rounded border bg-error/10 border-error/20 text-[11px] text-error">
+                    Investigation failed: {streamError}
                   </div>
                 )}
               </div>

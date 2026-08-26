@@ -713,13 +713,6 @@ async def trigger_investigation_stream(
     inc_id = incident.id
 
     repo_name = request.repository
-    if not repo_name and inc_scopes:
-        from app.models.incident import Repository
-        first_scope = inc_scopes[0]
-        repo = db.query(Repository).filter(Repository.id == first_scope.repository_id).first()
-        if repo:
-            repo_name = repo.full_name
-
     return StreamingResponse(
         _stream_investigation(inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request.service),
         media_type="text/event-stream",

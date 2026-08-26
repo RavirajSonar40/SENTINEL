@@ -64,9 +64,11 @@ async def tool_search_code(args: Dict) -> Dict:
     """Search codebase by semantic similarity."""
     query = args.get("query", "")
     repository = args.get("repository")
+    before_time = args.get("before_time")
     results = hybrid_search(
         query=query,
         repository=repository,
+        before_time=before_time,
         limit=args.get("limit", 10),
     )
     return {
@@ -126,48 +128,115 @@ async def tool_read_file(args: Dict) -> Dict:
 
 
 async def tool_get_diff(args: Dict) -> Dict:
-    """Get diff between commits for a file."""
-    # Placeholder — would call GitHub API in real implementation
+    """Get diff between commits for a file from GitHub."""
+    repo = args.get("repository", "")
+    sha = args.get("sha", "")
     file_path = args.get("file_path", "")
-    return {
-        "file_path": file_path,
-        "diff": "Diff retrieval requires GitHub integration",
-        "note": "Use /api/github/repos/{owner}/{repo}/commits/{sha} for real diffs",
-    }
+    if not repo or not sha:
+        return {"error": "repository and sha required"}
+
+    try:
+        from app.services.github import GitHubClient
+        client = GitHubClient()
+        parts = repo.split("/")
+        if len(parts) != 2:
+            return {"error": f"Invalid repo format: {repo}, expected owner/name"}
+        owner, name = parts
+        diff = await client.get_commit_diff(owner, name, sha)
+        # Filter to specific file if requested
+        if file_path:
+            lines = diff.split("\n")
+            filtered = []
+            in_file = False
+            for line in lines:
+                if line.startswith("diff --git"):
+                    in_file = file_path in line
+                if in_file:
+                    filtered.append(line)
+            diff = "\n".join(filtered) if filtered else f"No changes for {file_path} in this commit"
+        return {"repo": repo, "sha": sha, "file_path": file_path, "diff": diff[:5000]}
+    except Exception as e:
+        return {"error": str(e)[:200]}
 
 
 async def tool_search_logs(args: Dict) -> Dict:
-    """Search logs for error patterns."""
+    """Search logs for error patterns (stub — requires log aggregation service)."""
     query = args.get("query", "")
-    # Placeholder — would connect to log aggregation service
     return {
         "query": query,
         "results": [],
-        "note": "Log search not yet connected",
+        "note": "Log search requires integration with log aggregation (e.g., ELK, CloudWatch)",
     }
 
 
 async def tool_get_dependencies(args: Dict) -> Dict:
-    """Get dependency graph for a file or symbol."""
+    """Get dependency graph for a file or symbol (stub — requires AST analysis)."""
     file_path = args.get("file_path", "")
-    # Placeholder — would analyze import graph
     return {
         "file_path": file_path,
         "dependencies": [],
         "dependents": [],
-        "note": "Dependency analysis not yet implemented",
+        "note": "Dependency analysis requires AST-based import graph",
     }
 
 
 async def tool_get_git_history(args: Dict) -> Dict:
-    """Get recent git history for a file or service."""
+    """Get recent git history for a file from GitHub."""
+    repo = args.get("repository", "")
     file_path = args.get("file_path", "")
-    # Placeholder — would call GitHub API
-    return {
-        "file_path": file_path,
-        "commits": [],
-        "note": "Git history requires GitHub integration",
-    }
+    if not repo:
+        return {"error": "repository required"}
+
+    try:
+        from app.services.github import GitHubClient
+        client = GitHubClient()
+        parts = repo.split("/")
+        if len(parts) != 2:
+            return {"error": f"Invalid repo format: {repo}, expected owner/name"}
+        owner, name = parts
+        commits = await client.list_commits(owner, name, path=file_path if file_path else None)
+        return {
+            "repo": repo,
+            "file_path": file_path,
+            "commits": [
+                {
+                    "sha": c.get("sha", ""),
+                    "message": c.get("commit", {}).get("message", "")[:200],
+                    "author": c.get("commit", {}).get("author", {}).get("name", ""),
+                    "date": c.get("commit", {}).get("author", {}).get("date", ""),
+                }
+                for c in (commits or [])[:10]
+            ],
+        }
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
+async def tool_search_historical(args: Dict) -> Dict:
+    """Search for similar past incidents in Qdrant."""
+    query = args.get("query", "")
+    service = args.get("service", "")
+    if not query:
+        return {"error": "query required"}
+
+    try:
+        from app.services.historical import search_similar_incidents
+        results = await search_similar_incidents(query, service_filter=service, limit=5)
+        return {
+            "query": query,
+            "service": service,
+            "incidents": [
+                {
+                    "id": str(r.get("incident_id", "")),
+                    "title": r.get("title", ""),
+                    "root_cause": r.get("root_cause_summary", ""),
+                    "score": r.get("score", 0),
+                }
+                for r in (results or [])
+            ],
+        }
+    except Exception as e:
+        return {"error": str(e)[:200]}
 
 
 # --- Tool Registry ---
@@ -180,6 +249,7 @@ TOOLS: Dict[str, Tool] = {
         parameters_schema={
             "query": {"type": "string", "description": "Search query"},
             "repository": {"type": "string", "description": "Repository filter"},
+            "before_time": {"type": "string", "description": "ISO timestamp to filter commits before this time (deployment window)"},
             "limit": {"type": "integer", "description": "Max results"},
         },
     ),
@@ -232,6 +302,16 @@ TOOLS: Dict[str, Tool] = {
         execute=tool_get_git_history,
         parameters_schema={
             "file_path": {"type": "string", "description": "File path"},
+            "repository": {"type": "string", "description": "Repository (owner/name)"},
+        },
+    ),
+    "search_historical": Tool(
+        name="search_historical",
+        description="Search for similar past incidents to find patterns and previous solutions",
+        execute=tool_search_historical,
+        parameters_schema={
+            "query": {"type": "string", "description": "Search query"},
+            "service": {"type": "string", "description": "Service name filter"},
         },
     ),
 }
@@ -244,13 +324,17 @@ async def generate_tasks_llm(state: InvestigationState) -> List[InvestigationTas
     system_prompt = """You are an incident investigation planner. Given an incident, generate a list of investigation tasks.
 
 Available tools:
-- search_code: Search codebase by semantic similarity (params: query, repository, limit)
+- search_code: Search codebase by semantic similarity (params: query, repository, before_time, limit)
 - search_symbol: Find where a symbol is defined/used (params: symbol_name, repository)
 - read_file: Read file contents (params: file_path)
-- get_diff: Get changes between commits (params: file_path, from_commit, to_commit)
+- get_diff: Get changes between commits (params: file_path, sha, repository)
 - search_logs: Search application logs (params: query)
 - get_dependencies: Get dependency graph (params: file_path)
-- get_git_history: Get recent commits (params: file_path)
+- get_git_history: Get recent commits (params: file_path, repository)
+- search_historical: Search similar past incidents (params: query, service)
+
+Use before_time (ISO timestamp) to filter code search to commits before the deployment/incident time.
+This narrows results to code that existed when the incident occurred.
 
 Respond with JSON array of tasks, each with:
 - tool: tool name

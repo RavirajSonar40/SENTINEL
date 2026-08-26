@@ -140,7 +140,7 @@ def search_code(
         must_conditions.append(FieldCondition(key="symbol_name", match=MatchValue(value=symbol_name)))
     if before_time:
         must_conditions.append(FieldCondition(
-            key="indexed_at",
+            key="commit_time",
             range=Range(lt=before_time),
         ))
 

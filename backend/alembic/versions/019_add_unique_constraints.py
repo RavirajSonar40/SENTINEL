@@ -16,11 +16,21 @@ def upgrade():
         UNIQUE (incident_id, repository_id)
     """)
 
-    # Partial unique index on fingerprint (only non-null values)
+    # Deduplicate fingerprints before creating unique index
+    op.execute("""
+        DELETE FROM incident_signals
+        WHERE id IN (
+            SELECT a.id FROM incident_signals a
+            JOIN incident_signals b ON a.fingerprint = b.fingerprint
+            WHERE a.fingerprint IS NOT NULL AND a.id > b.id
+        )
+    """)
+
+    # Partial unique index on fingerprint per incident (only non-null, non-empty values)
     op.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS ix_incident_signals_fingerprint
-        ON incident_signals (fingerprint)
-        WHERE fingerprint IS NOT NULL
+        ON incident_signals (incident_id, fingerprint)
+        WHERE fingerprint IS NOT NULL AND fingerprint != ''
     """)
 
 

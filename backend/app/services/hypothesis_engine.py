@@ -18,6 +18,8 @@ class Hypothesis:
     contradicting_evidence: List[Dict] = field(default_factory=list)
     supporting_count: int = 0
     contradicting_count: int = 0
+    missing_evidence_count: int = 0
+    missing_evidence_details: List[str] = field(default_factory=list)
     status: str = "active"  # active, supported, rejected
     rejection_reason: Optional[str] = None
     severity: str = "medium"  # low, medium, high, critical
@@ -231,38 +233,86 @@ def critique_hypotheses(hypotheses: List[Hypothesis], evidence: List[Dict]) -> L
     for h in hypotheses:
         supporting = 0
         contradicting = 0
+        missing_indicators = []
+
+        h_words = set(h.label.lower().split() + h.description.lower().split())
+        # Remove very common words
+        common = {"the", "a", "an", "is", "was", "in", "on", "at", "to", "for", "of", "and", "or", "not", "this", "that", "with", "from"}
+        h_words -= common
 
         for ev in evidence:
             ev_text = f"{ev.get('file', '')} {ev.get('symbol', '')} {ev.get('content_preview', '')}".lower()
-            h_text = f"{h.label} {h.description}".lower()
+            ev_words = set(ev_text.split()) - common
 
-            # Check for alignment
-            overlap = sum(1 for word in h_text.split() if word in ev_text)
-            if overlap > 1:
+            # Supporting: meaningful word overlap
+            overlap = h_words & ev_words
+            if len(overlap) >= 2:
                 supporting += 1
             elif h.category == "code_change" and "code_search" in ev.get("source", ""):
                 supporting += 1
 
+            # Contradicting: hypothesis mentions a file/function that has error indicators
+            if ev.get("file") and ev["file"].lower() in h.description.lower():
+                # Check for error indicators in the evidence
+                error_terms = ["error", "exception", "fail", "crash", "timeout", "null", "panic"]
+                if any(term in ev_text for term in error_terms):
+                    contradicting += 1
+
+        # Detect missing evidence: what would strengthen or weaken this hypothesis?
+        if h.category == "code_change":
+            has_code = any("code_search" in ev.get("source", "") or "diff" in ev.get("source", "") for ev in evidence)
+            if not has_code:
+                missing_indicators.append("code_changes_or_diffs")
+        if h.category in ("database", "dependency"):
+            has_deps = any("dependencies" in ev.get("source", "") for ev in evidence)
+            if not has_deps:
+                missing_indicators.append("dependency_analysis")
+        if not any(ev.get("commit_sha") for ev in evidence):
+            missing_indicators.append("commit_history")
+        if not any("deployment" in ev.get("source", "") for ev in evidence):
+            missing_indicators.append("deployment_correlation")
+
         h.supporting_count = supporting
         h.contradicting_count = contradicting
+        h.missing_evidence_count = len(missing_indicators)
+        if not hasattr(h, "missing_evidence_details"):
+            h.missing_evidence_details = missing_indicators
 
         # Update confidence based on evidence
-        if supporting >= 3 and contradicting == 0:
-            h.confidence = "high"
-            h.status = "supported"
-        elif contradicting > supporting:
+        if contradicting > supporting:
             h.confidence = "low"
             h.status = "rejected"
             h.rejection_reason = "Contradicted by more evidence than supports it"
+        elif supporting >= 3 and contradicting == 0:
+            h.confidence = "high"
+            h.status = "supported"
+        elif supporting >= 1:
+            h.confidence = "medium"
+            h.status = "supported"
+        else:
+            h.confidence = "low"
+            h.missing_evidence_count += 1  # No direct evidence is itself a gap
 
     return hypotheses
+
+
+MIN_EVIDENCE_THRESHOLD = 2
 
 
 def identify_root_cause(
     state: InvestigationState,
     hypotheses: List[Hypothesis],
 ) -> Optional[Dict]:
-    """Identify root cause from supported hypotheses, or abstain."""
+    """Identify root cause from supported hypotheses, or abstain.
+
+    Abstains when minimum evidence is not met or no hypothesis is supported.
+    Uses diversity-aware ranking: prefers hypotheses from different categories.
+    """
+    # Gate: minimum evidence threshold
+    evidence_count = len(state.evidence_collected)
+    if evidence_count < MIN_EVIDENCE_THRESHOLD:
+        return None  # Abstain — insufficient evidence
+
     # Filter to supported hypotheses
     supported = [h for h in hypotheses if h.status == "supported"]
     if not supported:
@@ -274,10 +324,21 @@ def identify_root_cause(
     if not supported:
         return None  # Abstain
 
-    # Pick highest confidence
+    # Diversity-aware ranking: score by confidence, then prefer category diversity
     conf_order = {"high": 0, "medium": 1, "low": 2}
-    supported.sort(key=lambda h: conf_order.get(h.confidence, 3))
+    seen_categories = set()
+
+    def rank_key(h):
+        conf_score = conf_order.get(h.confidence, 3)
+        # Penalize if we already have a candidate in this category
+        category_penalty = 0.5 if h.category in seen_categories else 0
+        # Bonus for supporting evidence count
+        evidence_bonus = -min(h.supporting_count, 5) * 0.1
+        return conf_score + category_penalty + evidence_bonus
+
+    supported.sort(key=rank_key)
     winner = supported[0]
+    seen_categories.add(winner.category)
 
     # Collect related evidence
     related_evidence = [
@@ -294,6 +355,7 @@ def identify_root_cause(
         "severity": winner.severity,
         "confidence": winner.confidence,
         "supporting_evidence": related_evidence[:5],
+        "missing_evidence": winner.missing_evidence_details,
         "alternatives": [
             {"label": h.label, "confidence": h.confidence, "status": h.status}
             for h in hypotheses[:5]

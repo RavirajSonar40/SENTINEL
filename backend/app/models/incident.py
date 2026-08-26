@@ -392,6 +392,7 @@ class Evidence(Base):
     source_type = Column(SAEnum(EvidenceSourceType), nullable=False)
     source_id = Column(String(255), nullable=True)
     repository = Column(String(255), nullable=True)
+    commit_sha = Column(String(40), nullable=True)
     file_path = Column(String(500), nullable=True)
     line_start = Column(Integer, nullable=True)
     line_end = Column(Integer, nullable=True)
@@ -400,11 +401,13 @@ class Evidence(Base):
     content = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
 
+    observed_at = Column(DateTime(timezone=True), nullable=True)
     timestamp = Column(DateTime(timezone=True), nullable=True)
 
     source_url = Column(String(500), nullable=True)
 
     relevance_score = Column(Float, nullable=True)
+    retrieval_method = Column(String(100), nullable=True)
     metadata_json = Column("metadata", JSON, nullable=True)
 
     collected_at = Column(DateTime(timezone=True), server_default=func.now())

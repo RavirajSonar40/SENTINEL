@@ -7,14 +7,12 @@ import logging
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
-from app.core.config import Settings
+from app.core.config import settings
 from app.services.security import validate_input
 from app.models.incident import User, Incident, Investigation, ProposedFix, Repository, Evidence, RootCause
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-settings = Settings()
 
 
 class ChatMessage(BaseModel):
@@ -312,7 +310,12 @@ async def chat(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    context = build_context(db, current_user.id)
+    try:
+        context = build_context(db, current_user.id)
+    except Exception as e:
+        logger.error(f"Chat context build error: {e}")
+        context = "No context available."
+
     history = [ChatMessage(role=m.role, content=m.content) for m in request.history]
 
     # Sanitize user input for prompt injection

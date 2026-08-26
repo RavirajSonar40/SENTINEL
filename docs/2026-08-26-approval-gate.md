@@ -5,4 +5,4 @@
 - Reason: Investigation completion must not create branches, commits, or pull requests automatically.
 - Files changed: `backend/app/routes/investigation_engine.py`, `backend/app/routes/remediation.py`, `backend/tests/test_approval_gate.py`.
 - Validation: Focused approval-gate test and full backend test suite.
-- Commit: To be added after validation.
+- Commit: `ac99258752f687c4a02eebfc64a605e4090810e2`.

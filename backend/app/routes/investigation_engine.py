@@ -40,6 +40,7 @@ class InvestigateRequest(BaseModel):
 class InvestigateResponse(BaseModel):
     status: str
     investigation_id: Optional[str] = None
+    investigation_ids: Optional[List[str]] = None
     tasks_completed: int = 0
     tasks_failed: int = 0
     evidence_count: int = 0
@@ -56,17 +57,60 @@ async def trigger_investigation(
     db: Session = Depends(get_db),
 ):
     """Trigger a full AI investigation pipeline for an incident."""
+    from app.services.repository_resolver import resolve_repositories
+
     # Get incident
     incident = db.query(Incident).filter(Incident.id == request.incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    # Create or get investigation
-    investigation = db.query(Investigation).filter(
-        Investigation.incident_id == incident.id
-    ).first()
+    # Resolve candidate repositories
+    if request.repository:
+        # Explicit repo provided — single investigation
+        repo_candidates = []
+        from app.models.incident import Repository
+        repo = db.query(Repository).filter(Repository.full_name == request.repository).first()
+        if repo:
+            from app.services.repository_resolver import RepositoryCandidate
+            repo_candidates = [RepositoryCandidate(
+                repository_id=str(repo.id),
+                repository_full_name=repo.full_name,
+                score=100,
+                reasons=["explicit_request"],
+            )]
+        if not repo_candidates:
+            # Still proceed with the name even if not in DB
+            from app.services.repository_resolver import RepositoryCandidate
+            repo_candidates = [RepositoryCandidate(
+                repository_id="",
+                repository_full_name=request.repository,
+                score=100,
+                reasons=["explicit_request"],
+            )]
+    else:
+        repo_candidates = resolve_repositories(incident, db)
 
-    if not investigation:
+    if not repo_candidates:
+        # No repos found — run investigation without a specific repo
+        from app.services.repository_resolver import RepositoryCandidate
+        repo_candidates = [RepositoryCandidate(
+            repository_id="",
+            repository_full_name="",
+            score=0,
+            reasons=["no_repos_found"],
+        )]
+
+    investigation_ids = []
+    last_state = None
+    last_investigation = None
+    total_evidence = 0
+    total_hypotheses = 0
+    any_root_cause = False
+
+    for candidate in repo_candidates:
+        repo_name = candidate.repository_full_name or None
+
+        # Create investigation for this repository
         investigation = Investigation(
             incident_id=incident.id,
             status=InvestigationStatus.PLANNING.value,
@@ -75,123 +119,122 @@ async def trigger_investigation(
         )
         db.add(investigation)
         db.flush()
+        investigation_ids.append(str(investigation.id))
 
         # Link to incident
         incident.status = IncidentStatus.INVESTIGATING.value
 
-    # Build state — resolve repository from scopes if not provided
-    repo_name = request.repository
-    if not repo_name and incident.scopes:
-        from app.models.incident import Repository
-        first_scope = incident.scopes[0]
-        repo = db.query(Repository).filter(Repository.id == first_scope.repository_id).first()
-        if repo:
-            repo_name = repo.full_name
-
-    state = InvestigationState(
-        incident_id=incident.id,
-        incident_title=incident.title,
-        incident_description=incident.description or "",
-        error_signals=[incident.error_signature] if incident.error_signature else [],
-        repository=repo_name,
-        service=request.service or incident.service_name,
-    )
-
-    # Run investigation engine
-    state = await run_engine(state, db=db, investigation_id=investigation.id)
-
-    # Persist evidence
-    evidence_count = 0
-    for ev_data in state.evidence_collected[:20]:
-        evidence = Evidence(
-            investigation_id=investigation.id,
+        # Build state
+        state = InvestigationState(
             incident_id=incident.id,
-            source_type=EvidenceSourceType.COMMIT.value if "code" in ev_data.get("source", "") else EvidenceSourceType.FILE.value,
-            title=f"{ev_data.get('symbol', ev_data.get('file', 'Unknown'))}",
-            summary=ev_data.get("content_preview", "")[:500],
-            repository=ev_data.get("file", "").split("/")[0] if ev_data.get("file") else None,
-            file_path=ev_data.get("file"),
-            source_id=ev_data.get("symbol"),
-            relevance_score=ev_data.get("score", 0.5),
+            incident_title=incident.title,
+            incident_description=incident.description or "",
+            error_signals=[incident.error_signature] if incident.error_signature else [],
+            repository=repo_name,
+            service=request.service or incident.service_name,
         )
-        db.add(evidence)
-        evidence_count += 1
 
-    # Generate hypotheses (LLM-powered)
-    try:
-        hypotheses = await generate_hypotheses_llm(state, state.evidence_collected)
-    except Exception:
-        hypotheses = generate_hypotheses(state)
-    hypotheses = critique_hypotheses(hypotheses, state.evidence_collected)
+        # Run investigation engine
+        state = await run_engine(state, db=db, investigation_id=investigation.id)
 
-    # Persist hypotheses
-    for h in hypotheses[:10]:
-        hyp_model = HypothesisModel(
-            investigation_id=investigation.id,
-            incident_id=incident.id,
-            label=h.label,
-            description=h.description,
-            confidence=h.confidence,
-            status=HypothesisStatus.SUPPORTED.value if h.status == "supported" else HypothesisStatus.PROPOSED.value,
-            supporting_evidence_count=h.supporting_count,
-            contradicting_evidence_count=h.contradicting_count,
-            rejection_reason=h.rejection_reason,
-        )
-        db.add(hyp_model)
-
-    # Identify root cause
-    root_cause = identify_root_cause(state, hypotheses)
-    root_cause_found = False
-
-    if root_cause:
-        root_cause_found = True
-        rc = RootCause(
-            investigation_id=investigation.id,
-            incident_id=incident.id,
-            summary=root_cause.get("label", "Root Cause"),
-            causal_explanation=root_cause.get("description", ""),
-            confidence=root_cause.get("confidence", "medium"),
-            affected_component=root_cause.get("category", "unknown"),
-        )
-        db.add(rc)
-
-        # Generate proposed fixes
-        fixes = generate_proposed_fixes(root_cause, state)
-        for fix in fixes[:3]:
-            patch = await generate_patch(
-                root_cause,
-                fix.get("files_to_modify", []),
-            )
-            fix_model = ProposedFix(
+        # Persist evidence
+        evidence_count = 0
+        for ev_data in state.evidence_collected[:20]:
+            evidence = Evidence(
                 investigation_id=investigation.id,
-                root_cause_id=rc.id,
                 incident_id=incident.id,
-                fix_type=fix.get("type"),
-                title=fix.get("title", "Proposed Fix"),
-                description=fix.get("description", ""),
-                proposed_change=fix.get("description", ""),
-                repository=state.repository,
-                diff=format_patch_for_pr(patch),
-                patch_json=patch,
+                source_type=EvidenceSourceType.COMMIT.value if "code" in ev_data.get("source", "") else EvidenceSourceType.FILE.value,
+                title=f"{ev_data.get('symbol', ev_data.get('file', 'Unknown'))}",
+                summary=ev_data.get("content_preview", "")[:500],
+                repository=ev_data.get("file", "").split("/")[0] if ev_data.get("file") else None,
+                file_path=ev_data.get("file"),
+                source_id=ev_data.get("symbol"),
+                relevance_score=ev_data.get("score", 0.5),
             )
-            db.add(fix_model)
-            db.flush()
+            db.add(evidence)
+            evidence_count += 1
+        total_evidence += evidence_count
 
-            for file_path in fix.get("files_to_modify", [])[:5]:
-                fix_file = FixFile(
-                    fix_id=fix_model.id,
-                    file_path=file_path,
-                    change_type="modify",
+        # Generate hypotheses (LLM-powered)
+        try:
+            hypotheses = await generate_hypotheses_llm(state, state.evidence_collected)
+        except Exception:
+            hypotheses = generate_hypotheses(state)
+        hypotheses = critique_hypotheses(hypotheses, state.evidence_collected)
+
+        # Persist hypotheses
+        for h in hypotheses[:10]:
+            hyp_model = HypothesisModel(
+                investigation_id=investigation.id,
+                incident_id=incident.id,
+                label=h.label,
+                description=h.description,
+                confidence=h.confidence,
+                status=HypothesisStatus.SUPPORTED.value if h.status == "supported" else HypothesisStatus.PROPOSED.value,
+                supporting_evidence_count=h.supporting_count,
+                contradicting_evidence_count=h.contradicting_count,
+                rejection_reason=h.rejection_reason,
+            )
+            db.add(hyp_model)
+        total_hypotheses += len(hypotheses)
+
+        # Identify root cause
+        root_cause = identify_root_cause(state, hypotheses)
+        root_cause_found = False
+
+        if root_cause:
+            root_cause_found = True
+            any_root_cause = True
+            rc = RootCause(
+                investigation_id=investigation.id,
+                incident_id=incident.id,
+                summary=root_cause.get("label", "Root Cause"),
+                causal_explanation=root_cause.get("description", ""),
+                confidence=root_cause.get("confidence", "medium"),
+                affected_component=root_cause.get("category", "unknown"),
+            )
+            db.add(rc)
+
+            # Generate proposed fixes
+            fixes = generate_proposed_fixes(root_cause, state)
+            for fix in fixes[:3]:
+                patch = await generate_patch(
+                    root_cause,
+                    fix.get("files_to_modify", []),
                 )
-                db.add(fix_file)
+                fix_model = ProposedFix(
+                    investigation_id=investigation.id,
+                    root_cause_id=rc.id,
+                    incident_id=incident.id,
+                    fix_type=fix.get("type"),
+                    title=fix.get("title", "Proposed Fix"),
+                    description=fix.get("description", ""),
+                    proposed_change=fix.get("description", ""),
+                    repository=state.repository,
+                    diff=format_patch_for_pr(patch),
+                    patch_json=patch,
+                )
+                db.add(fix_model)
+                db.flush()
 
-    # Update investigation
-    investigation.status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
-    investigation.confidence = state.confidence
-    investigation.completed_at = datetime.now(timezone.utc)
+                for file_path in fix.get("files_to_modify", [])[:5]:
+                    fix_file = FixFile(
+                        fix_id=fix_model.id,
+                        file_path=file_path,
+                        change_type="modify",
+                    )
+                    db.add(fix_file)
+
+        # Update investigation
+        investigation.status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
+        investigation.confidence = state.confidence
+        investigation.completed_at = datetime.now(timezone.utc)
+
+        last_state = state
+        last_investigation = investigation
 
     # Update incident
-    if root_cause_found:
+    if any_root_cause:
         incident.status = IncidentStatus.ROOT_CAUSE_IDENTIFIED.value
     else:
         incident.status = IncidentStatus.ROOT_CAUSE_ANALYSIS.value
@@ -200,14 +243,15 @@ async def trigger_investigation(
 
     return InvestigateResponse(
         status="completed",
-        investigation_id=str(investigation.id),
-        tasks_completed=state.tasks_completed,
-        tasks_failed=state.tasks_failed,
-        evidence_count=evidence_count,
-        hypotheses_count=len(hypotheses),
-        confidence=state.confidence,
-        root_cause_found=root_cause_found,
-        message="Investigation complete" if root_cause_found else "Investigation complete — root cause not definitively identified",
+        investigation_id=investigation_ids[0] if investigation_ids else None,
+        investigation_ids=investigation_ids,
+        tasks_completed=last_state.tasks_completed if last_state else 0,
+        tasks_failed=last_state.tasks_failed if last_state else 0,
+        evidence_count=total_evidence,
+        hypotheses_count=total_hypotheses,
+        confidence=last_state.confidence if last_state else "low",
+        root_cause_found=any_root_cause,
+        message=f"Investigation complete across {len(repo_candidates)} repository(ies)",
     )
 
 

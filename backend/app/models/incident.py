@@ -252,7 +252,7 @@ class Incident(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     alert_id = Column(String(255), nullable=True)
-    deployment_id = Column(String(255), nullable=True)
+    deployment_id = Column(UUID(as_uuid=True), ForeignKey("deployments.id"), nullable=True)
 
     confidence = Column(SAEnum(Confidence), nullable=True)
     root_cause_summary = Column(Text, nullable=True)
@@ -266,6 +266,7 @@ class Incident(Base):
 
     creator = relationship("User", back_populates="incidents")
     service_rel = relationship("Service", back_populates="incidents")
+    deployment = relationship("Deployment", back_populates="incident")
     scopes = relationship("RepositoryScope", back_populates="incident", cascade="all, delete-orphan")
     signals = relationship("IncidentSignal", back_populates="incident", cascade="all, delete-orphan")
     investigations = relationship("Investigation", back_populates="incident", cascade="all, delete-orphan")
@@ -316,6 +317,7 @@ class Deployment(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     service = relationship("Service", back_populates="deployments")
+    incident = relationship("Incident", back_populates="deployment")
 
 
 # ============================================================================

@@ -13,3 +13,4 @@ PyJWT==2.8.0
 redis==5.0.8
 slowapi==0.1.10
 qdrant-client==1.12.1
+pinecone-client==6.0.0

@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = ""
     REDIS_URL: str = ""
     QDRANT_URL: str = "http://localhost:6333"
+    PINECONE_API_KEY: str = ""
+    PINECONE_INDEX: str = "sentinel"
 
     LOG_LEVEL: str = "INFO"
 

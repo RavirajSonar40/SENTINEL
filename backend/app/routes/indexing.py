@@ -73,17 +73,24 @@ def _scan_directory(local_path: str, extensions: List[str] = None) -> Dict[str, 
 
 async def _scan_github_repo(repository: str, branch: str = "main") -> Dict[str, str]:
     """Scan a GitHub repository and read all matching source files."""
+    import logging
+    logger = logging.getLogger("sentinel.indexing")
     from app.services.github import GitHubClient
     from app.core.config import settings
 
     files = {}
-    extensions = ["*.py", "*.js", "*.ts", "*.tsx", "*.jsx", "*.go", "*.rs", "*.java"]
     skip_dirs = ["node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build", "vendor"]
 
     if "/" not in repository:
+        logger.warning(f"Invalid repository format: {repository}")
         return files
 
-    client = GitHubClient(token=settings.GITHUB_TOKEN)
+    token = settings.GITHUB_TOKEN
+    if not token:
+        logger.warning("GITHUB_TOKEN not set — cannot index GitHub repository")
+        return files
+
+    client = GitHubClient(token=token)
     owner, repo = repository.split("/", 1)
 
     # Get repo tree recursively
@@ -186,7 +193,7 @@ async def index_repository(
             status="warning",
             files_indexed=0,
             chunks_indexed=0,
-            message="No files found to index. Provide local_path, repository (owner/repo), or file_paths.",
+            message="No files found to index. Provide local_path, repository (owner/repo), or file_paths. For GitHub repos, ensure GITHUB_TOKEN is set in environment variables.",
         )
 
     # Index files

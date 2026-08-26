@@ -201,7 +201,7 @@ async def trigger_investigation(
 
 
 async def _stream_investigation(
-    incident, investigation, repo_name, request_service, db
+    inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_scopes, inc_service, repo_name, request_service,
 ) -> AsyncGenerator[str, None]:
     """Generator that yields SSE events during investigation."""
     def emit(event_type: str, data: dict):
@@ -213,7 +213,7 @@ async def _stream_investigation(
             "step": "planning",
             "status": "active",
             "message": "Planning investigation strategy...",
-            "detail": f"Analyzing incident: {incident.title}",
+            "detail": f"Analyzing incident: {inc_title}",
         })
 
         from app.services.investigation_engine import (
@@ -221,12 +221,12 @@ async def _stream_investigation(
         )
 
         state = InvestigationState(
-            incident_id=str(incident.id),
-            incident_title=incident.title,
-            incident_description=incident.description or "",
-            error_signals=[incident.error_signature] if incident.error_signature else [],
+            incident_id=str(inc_id),
+            incident_title=inc_title,
+            incident_description=inc_desc,
+            error_signals=[inc_sig] if inc_sig else [],
             repository=repo_name,
-            service=request_service or incident.service_name,
+            service=request_service or inc_service,
         )
 
         # Step 2: Repository resolution
@@ -449,8 +449,8 @@ async def _stream_investigation(
         try:
             for ev_data in state.evidence_collected[:20]:
                 evidence = EvidenceModel(
-                    investigation_id=investigation.id,
-                    incident_id=incident.id,
+                    investigation_id=inv_id,
+                    incident_id=inc_id,
                     source_type=EvidenceSourceType.COMMIT.value if "code" in ev_data.get("source", "") else EvidenceSourceType.FILE.value,
                     title=f"{ev_data.get('symbol', ev_data.get('file', 'Unknown'))}",
                     summary=ev_data.get("content_preview", "")[:500],
@@ -463,8 +463,8 @@ async def _stream_investigation(
 
             for h in hypotheses[:10]:
                 hyp_model = HypothesisModel(
-                    investigation_id=investigation.id,
-                    incident_id=incident.id,
+                    investigation_id=inv_id,
+                    incident_id=inc_id,
                     label=h.label,
                     description=h.description,
                     confidence=h.confidence,
@@ -478,37 +478,39 @@ async def _stream_investigation(
             rc = None
             if root_cause:
                 rc = RootCause(
-                    investigation_id=investigation.id,
-                    incident_id=incident.id,
-                summary=root_cause.get("label", "Root Cause"),
-                causal_explanation=root_cause.get("description", ""),
-                confidence=root_cause.get("confidence", "medium"),
-                affected_component=root_cause.get("category", "unknown"),
-            )
-            persist_db.add(rc)
-            persist_db.flush()
-
-            for fix in fixes[:3]:
-                fix_model = ProposedFix(
-                    investigation_id=investigation.id,
-                    root_cause_id=rc.id,
-                    incident_id=incident.id,
-                    fix_type=fix.get("type"),
-                    title=fix.get("title", "Proposed Fix"),
-                    description=fix.get("description", ""),
-                    proposed_change=fix.get("description", ""),
+                    investigation_id=inv_id,
+                    incident_id=inc_id,
+                    summary=root_cause.get("label", "Root Cause"),
+                    causal_explanation=root_cause.get("description", ""),
+                    confidence=root_cause.get("confidence", "medium"),
+                    affected_component=root_cause.get("category", "unknown"),
                 )
-                persist_db.add(fix_model)
+                persist_db.add(rc)
                 persist_db.flush()
-                for file_path in fix.get("files_to_modify", [])[:5]:
-                    fix_file = FixFile(fix_id=fix_model.id, file_path=file_path, change_type="modify")
-                    persist_db.add(fix_file)
 
-            investigation.status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
-            investigation.confidence = state.confidence
-            investigation.completed_at = datetime.now(timezone.utc)
-            incident.status = IncidentStatus.ROOT_CAUSE_IDENTIFIED.value if root_cause_found else IncidentStatus.ROOT_CAUSE_ANALYSIS.value
+                for fix in fixes[:3]:
+                    fix_model = ProposedFix(
+                        investigation_id=inv_id,
+                        root_cause_id=rc.id,
+                        incident_id=inc_id,
+                        fix_type=fix.get("type"),
+                        title=fix.get("title", "Proposed Fix"),
+                        description=fix.get("description", ""),
+                        proposed_change=fix.get("description", ""),
+                    )
+                    persist_db.add(fix_model)
+                    persist_db.flush()
+                    for file_path in fix.get("files_to_modify", [])[:5]:
+                        fix_file = FixFile(fix_id=fix_model.id, file_path=file_path, change_type="modify")
+                        persist_db.add(fix_file)
 
+            from sqlalchemy import text
+            new_status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
+            inc_status = IncidentStatus.ROOT_CAUSE_IDENTIFIED.value if root_cause_found else IncidentStatus.ROOT_CAUSE_ANALYSIS.value
+            persist_db.execute(text("UPDATE investigations SET status=:s, confidence=:c, completed_at=NOW() WHERE id=:id"),
+                               {"s": new_status, "c": state.confidence, "id": str(inv_id)})
+            persist_db.execute(text("UPDATE incidents SET status=:s WHERE id=:id"),
+                               {"s": inc_status, "id": str(inc_id)})
             persist_db.commit()
         except Exception as persist_err:
             try:
@@ -522,7 +524,7 @@ async def _stream_investigation(
         # Final event
         yield emit("complete", {
             "status": "completed",
-            "investigation_id": str(investigation.id),
+            "investigation_id": str(inv_id),
             "root_cause_found": root_cause_found,
             "confidence": state.confidence,
             "evidence_count": len(state.evidence_collected),
@@ -561,20 +563,32 @@ async def trigger_investigation_stream(
         )
         db.add(investigation)
         db.flush()
-        db.commit()
         incident.status = IncidentStatus.INVESTIGATING.value
         db.commit()
 
+    # Refresh so attributes survive after session closes
+    db.refresh(incident)
+    db.refresh(investigation)
+
+    # Snapshot values before session closes
+    inc_title = incident.title or "Unknown"
+    inc_desc = incident.description or ""
+    inc_sig = incident.error_signature
+    inc_scopes = list(incident.scopes) if incident.scopes else []
+    inc_service = incident.service_name
+    inv_id = investigation.id
+    inc_id = incident.id
+
     repo_name = request.repository
-    if not repo_name and incident.scopes:
+    if not repo_name and inc_scopes:
         from app.models.incident import Repository
-        first_scope = incident.scopes[0]
+        first_scope = inc_scopes[0]
         repo = db.query(Repository).filter(Repository.id == first_scope.repository_id).first()
         if repo:
             repo_name = repo.full_name
 
     return StreamingResponse(
-        _stream_investigation(incident, investigation, repo_name, request.service, db),
+        _stream_investigation(inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_scopes, inc_service, repo_name, request.service),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -162,13 +162,18 @@ async def _run_auto_investigation(incident_id: str):
             db.commit()
         db.refresh(incident)
         db.refresh(investigation)
+        incident_repositories = [
+            scope.repository.full_name
+            for scope in incident.scopes
+            if scope.repository
+        ]
         stream = _stream_investigation(
             incident.id,
             investigation.id,
             incident.title or "Unknown",
             incident.description or "",
             incident.error_signature,
-            list(incident.scopes) if incident.scopes else [],
+            incident_repositories,
             incident.service_name,
             None,
             incident.service_name,

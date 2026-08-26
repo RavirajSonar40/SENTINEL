@@ -209,7 +209,7 @@ async def trigger_investigation(
 
 
 async def _stream_investigation(
-    inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_scopes, inc_service, repo_name, request_service,
+    inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request_service,
 ) -> AsyncGenerator[str, None]:
     """Generator that yields SSE events during investigation."""
     def emit(event_type: str, data: dict):
@@ -245,12 +245,7 @@ async def _stream_investigation(
             InvestigationState, run_investigation as run_engine,
         )
 
-        linked_repositories = [
-            scope.repository.full_name
-            for scope in inc_scopes
-            if getattr(scope, "repository", None)
-        ]
-        repositories = [repo_name] if repo_name else linked_repositories
+        repositories = [repo_name] if repo_name else list(inc_repositories)
         state = InvestigationState(
             incident_id=str(inc_id),
             incident_title=inc_title,
@@ -712,7 +707,7 @@ async def trigger_investigation_stream(
     inc_title = incident.title or "Unknown"
     inc_desc = incident.description or ""
     inc_sig = incident.error_signature
-    inc_scopes = list(incident.scopes) if incident.scopes else []
+    inc_repositories = [scope.repository.full_name for scope in incident.scopes if scope.repository]
     inc_service = incident.service_name
     inv_id = investigation.id
     inc_id = incident.id
@@ -726,7 +721,7 @@ async def trigger_investigation_stream(
             repo_name = repo.full_name
 
     return StreamingResponse(
-        _stream_investigation(inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_scopes, inc_service, repo_name, request.service),
+        _stream_investigation(inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request.service),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

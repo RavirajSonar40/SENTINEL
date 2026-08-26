@@ -69,11 +69,20 @@ export default function InvestigationDetail() {
   const [repos, setRepos] = useState<Repository[]>([]);
   const [loading, setLoading] = useState(true);
   const [investigating, setInvestigating] = useState(false);
-  const [engineResult, setEngineResult] = useState<any>(null);
+  const [engineResult, setEngineResult] = useState<{
+    status?: string;
+    tasks_completed?: number;
+    tasks_failed?: number;
+    evidence_count?: number;
+    hypotheses_count?: number;
+    confidence?: string;
+    root_cause_found?: boolean;
+    message?: string;
+  } | null>(null);
   const [rootCause, setRootCause] = useState<RootCause | null>(null);
   const [fixes, setFixes] = useState<ProposedFix[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
-  const [githubData, setGithubData] = useState<{commits: any[]; prs: any[]; branches: any[]}>({commits: [], prs: [], branches: []});
+  const [githubData, setGithubData] = useState<{commits: Array<{sha?: string; commit?: {message?: string}}>; prs: Array<{number?: number; title?: string}>; branches: Array<{name?: string}>}>({commits: [], prs: [], branches: []});
   const [githubLoading, setGithubLoading] = useState<string | null>(null);
   const [selectedRepo, setSelectedRepo] = useState<string>("");
   const [streamSteps, setStreamSteps] = useState<InvestigationStep[]>([]);
@@ -135,7 +144,7 @@ export default function InvestigationDetail() {
         });
       },
       async (data) => {
-        setEngineResult(data);
+        setEngineResult(data as typeof engineResult);
         setStreamingActive(false);
         try {
           // Refresh all data
@@ -702,7 +711,7 @@ export default function InvestigationDetail() {
                     </button>
                     {githubData.commits.length > 0 && (
                       <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
-                        {githubData.commits.slice(0, 5).map((c: any, i: number) => (
+                        {githubData.commits.slice(0, 5).map((c: {sha?: string; commit?: {message?: string}}, i: number) => (
                           <div key={i} className="text-[10px] font-mono text-on-surface-variant truncate">
                             {c.sha?.slice(0, 7)} {c.commit?.message?.slice(0, 40)}
                           </div>
@@ -727,7 +736,7 @@ export default function InvestigationDetail() {
                     </button>
                     {githubData.prs.length > 0 && (
                       <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
-                        {githubData.prs.slice(0, 5).map((p: any, i: number) => (
+                        {githubData.prs.slice(0, 5).map((p: {number?: number; title?: string}, i: number) => (
                           <div key={i} className="text-[10px] font-mono text-on-surface-variant truncate">
                             #{p.number} {p.title?.slice(0, 40)}
                           </div>
@@ -752,7 +761,7 @@ export default function InvestigationDetail() {
                     </button>
                     {githubData.branches.length > 0 && (
                       <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
-                        {githubData.branches.slice(0, 5).map((b: any, i: number) => (
+                        {githubData.branches.slice(0, 5).map((b: {name?: string}, i: number) => (
                           <div key={i} className="text-[10px] font-mono text-on-surface-variant truncate">
                             {b.name}
                           </div>

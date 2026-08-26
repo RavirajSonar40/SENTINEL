@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import Logo from "@/components/Logo";
 
 const navSections = [
   {
@@ -56,18 +57,8 @@ export default function Sidebar() {
   return (
     <nav className="w-[220px] h-screen flex flex-col bg-surface-container-lowest fixed left-0 top-0 z-50 border-r border-outline-variant">
       {/* Logo */}
-      <div className="px-4 py-4 flex items-center gap-2.5 border-b border-outline-variant">
-        <div className="w-8 h-8 rounded-lg bg-primary-container flex items-center justify-center">
-          <img
-            src="/sentinel_logo.png"
-            alt="Sentinel"
-            className="w-5 h-5 object-contain"
-
-          />
-        </div>
-        <span className="text-[15px] font-bold text-on-surface tracking-tight">
-          SENTINEL
-        </span>
+      <div className="px-4 py-4 border-b border-outline-variant">
+        <Logo size="md" href="/" />
       </div>
 
       {/* Navigation */}
@@ -107,9 +98,9 @@ export default function Sidebar() {
                     {item.icon}
                   </span>
                   <span className="flex-1">{item.label}</span>
-                  {"tag" in item && (item as any).tag && (
+                  {"tag" in item && (item as { tag?: string }).tag && (
                     <span className="bg-tertiary/20 text-tertiary text-[9px] font-bold px-1.5 py-0.5 rounded uppercase">
-                      {(item as any).tag}
+                      {(item as { tag?: string }).tag}
                     </span>
                   )}
                 </Link>

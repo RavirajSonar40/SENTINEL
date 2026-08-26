@@ -45,14 +45,15 @@ def _get_qdrant():
 def index_incident(incident: Dict) -> bool:
     """Index a resolved incident for future similarity search."""
     text = f"{incident.get('title', '')} {incident.get('description', '')} {incident.get('root_cause', '')}"
+    embedding = embed_texts([text])[0]
 
-    # Try Pinecone (integrated embedding — sends raw text)
+    # Try Pinecone (with calculated embedding)
     index = _get_pinecone()
     if index:
         try:
             index.upsert(vectors=[{
                 "id": incident["id"],
-                "text": text[:1500],
+                "values": embedding,
                 "metadata": {
                     "title": incident.get("title", ""),
                     "description": incident.get("description", ""),

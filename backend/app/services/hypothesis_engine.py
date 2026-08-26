@@ -109,17 +109,16 @@ def generate_hypotheses(state: InvestigationState) -> List[Hypothesis]:
         elif pattern_name == "deployment":
             desc += " possibly related to a recent deployment"
 
-        h = Hypothesis(
-            id="",
-            label=label,
-            description=desc,
-            confidence="high" if score > 0.3 else "medium",
-            severity=pattern_info["severity"],
-            category=pattern_info["category"],
-        )
-        if h.id not in seen:
-            seen.add(h.id)
-            hypotheses.append(h)
+        if label not in seen:
+            seen.add(label)
+            hypotheses.append(Hypothesis(
+                id=f"hyp_{len(hypotheses)}",
+                label=label,
+                description=desc,
+                confidence="high" if score > 0.3 else "medium",
+                severity=pattern_info["severity"],
+                category=pattern_info["category"],
+            ))
 
     # Generate evidence-based hypotheses from code search results
     evidence_groups = {}
@@ -131,21 +130,21 @@ def generate_hypotheses(state: InvestigationState) -> List[Hypothesis]:
 
     for file_path, file_evidence in list(evidence_groups.items())[:5]:
         symbols = [e.get("symbol") for e in file_evidence if e.get("symbol")]
-        symbol_str = ", ".join(symbols[:3]) if symbols else file_path.split("/")[-1]
+        symbol_str = ", ".join(symbols[:3]) if symbols else file_path.replace("\\", "/").split("/")[-1]
+        label = f"Issue in {symbol_str}"
 
-        h = Hypothesis(
-            id="",
-            label=f"Issue in {symbol_str}",
-            description=f"Code in {file_path} may contain the bug based on semantic similarity to error signals",
-            confidence="medium",
-            severity="medium",
-            category="code_change",
-            supporting_evidence=file_evidence,
-            supporting_count=len(file_evidence),
-        )
-        if h.id not in seen:
-            seen.add(h)
-            hypotheses.append(h)
+        if label not in seen:
+            seen.add(label)
+            hypotheses.append(Hypothesis(
+                id=f"hyp_{len(hypotheses)}",
+                label=label,
+                description=f"Code in {file_path} may contain the bug based on semantic similarity to error signals",
+                confidence="medium",
+                severity="medium",
+                category="code_change",
+                supporting_evidence=file_evidence,
+                supporting_count=len(file_evidence),
+            ))
 
     # Add catch-all hypotheses if too few
     if len(hypotheses) < 3:
@@ -157,17 +156,16 @@ def generate_hypotheses(state: InvestigationState) -> List[Hypothesis]:
             ("Data State Issue", "An unexpected data state triggered the error", "data", "low"),
         ]
         for label, desc, category, confidence in catch_alls:
-            h = Hypothesis(
-                id="",
-                label=label,
-                description=desc,
-                confidence=confidence,
-                severity="medium",
-                category=category,
-            )
-            if h.id not in seen:
-                seen.add(h.id)
-                hypotheses.append(h)
+            if label not in seen:
+                seen.add(label)
+                hypotheses.append(Hypothesis(
+                    id=f"hyp_{len(hypotheses)}",
+                    label=label,
+                    description=desc,
+                    confidence=confidence,
+                    severity="medium",
+                    category=category,
+                ))
 
     # Sort by confidence
     conf_order = {"high": 0, "medium": 1, "low": 2}

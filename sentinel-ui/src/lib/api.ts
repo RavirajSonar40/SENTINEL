@@ -486,7 +486,7 @@ export async function getBenchmarkDataset(token: string) {
   return request("/eval/benchmark", { token });
 }
 
-export async function evaluateGrounding(token: string, claim: string, evidence: any[], files?: string[]) {
+export async function evaluateGrounding(token: string, claim: string, evidence: Record<string, unknown>[], files?: string[]) {
   const params = new URLSearchParams({ root_cause_claim: claim });
   if (files) params.set("affected_files", JSON.stringify(files));
   return request(`/eval/grounding?${params.toString()}`, {
@@ -508,7 +508,7 @@ export interface AuditLog {
   entity_type: string;
   entity_id: string;
   user_id: string;
-  details: any;
+  details: Record<string, unknown>;
   created_at: string | null;
 }
 

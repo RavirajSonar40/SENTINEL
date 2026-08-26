@@ -80,9 +80,28 @@ def ensure_collection():
     return False
 
 
+# --- In-Memory Fallback ---
+_memory_store: List[Dict[str, Any]] = []
+
+def _cosine_similarity(v1: List[float], v2: List[float]) -> float:
+    dot = sum(a * b for a, b in zip(v1, v2))
+    norm1 = sum(a * a for a in v1) ** 0.5
+    norm2 = sum(b * b for b in v2) ** 0.5
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return dot / (norm1 * norm2)
+
+
 def upsert_chunks(chunks: List[Dict]) -> int:
     """Index code chunks. Returns count indexed."""
-    # Try Pinecone first (integrated embedding — sends raw text)
+    if not chunks:
+        return 0
+
+    # Compute embeddings
+    texts = [c["content"][:1500] for c in chunks]
+    embeddings = embed_texts(texts)
+
+    # Try Pinecone first (with calculated embeddings)
     index = _get_pinecone()
     if index:
         try:
@@ -90,11 +109,11 @@ def upsert_chunks(chunks: List[Dict]) -> int:
             for i, chunk in enumerate(chunks):
                 vectors.append({
                     "id": str(uuid.uuid5(uuid.NAMESPACE_URL, chunk.get("id", str(i)))),
-                    "text": chunk["content"][:1500],
+                    "values": embeddings[i],
                     "metadata": {
                         "file_path": chunk.get("file_path", ""),
                         "chunk_type": chunk.get("chunk_type", ""),
-                        "symbol_name": chunk.get("symbol_name", ""),
+                        "symbol_name": chunk.get("symbol_name", "") or "",
                         "content": chunk["content"][:2000],
                         "language": chunk.get("language", "unknown"),
                         "line_start": chunk.get("line_start", 0),
@@ -110,10 +129,6 @@ def upsert_chunks(chunks: List[Dict]) -> int:
             return len(vectors)
         except Exception as e:
             logger.warning(f"Pinecone upsert failed: {e}")
-
-    # Fallback to Qdrant (pre-computed embeddings)
-    texts = [c["content"][:1500] for c in chunks]
-    embeddings = embed_texts(texts)
 
     # Fallback to Qdrant
     client = _get_qdrant()
@@ -152,7 +167,15 @@ def upsert_chunks(chunks: List[Dict]) -> int:
         except Exception as e:
             logger.warning(f"Qdrant upsert failed: {e}")
 
-    return 0
+    # In-memory fallback (local development / testing)
+    global _memory_store
+    for i, chunk in enumerate(chunks):
+        _memory_store.append({
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, chunk.get("id", str(i)))),
+            "vector": embeddings[i],
+            "chunk": chunk,
+        })
+    return len(chunks)
 
 
 def search_code(
@@ -259,6 +282,42 @@ def search_code(
         except Exception as e:
             logger.warning(f"Qdrant search failed: {e}")
 
+    # In-memory search fallback
+    if _memory_store:
+        scored = []
+        for item in _memory_store:
+            chunk = item["chunk"]
+            if repository and chunk.get("repository") and repository not in chunk.get("repository", ""):
+                continue
+            if language and chunk.get("language") != language:
+                continue
+            if chunk_type and chunk.get("chunk_type") != chunk_type:
+                continue
+            if symbol_name and chunk.get("symbol_name") != symbol_name:
+                continue
+            score = _cosine_similarity(query_embedding, item["vector"])
+            if score >= min_score:
+                scored.append((score, item))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [
+            SearchResult(
+                id=item["id"],
+                score=score,
+                file_path=item["chunk"].get("file_path", ""),
+                chunk_type=item["chunk"].get("chunk_type", ""),
+                symbol_name=item["chunk"].get("symbol_name"),
+                content=item["chunk"].get("content", ""),
+                metadata={
+                    "language": item["chunk"].get("language"),
+                    "line_start": item["chunk"].get("line_start"),
+                    "line_end": item["chunk"].get("line_end"),
+                    "repository": item["chunk"].get("repository"),
+                    "commit_sha": item["chunk"].get("commit_sha"),
+                },
+            )
+            for score, item in scored[:limit]
+        ]
+
     return []
 
 
@@ -316,6 +375,23 @@ def search_by_symbol(symbol_name: str, repository: Optional[str] = None) -> List
         except Exception:
             pass
 
+    if _memory_store:
+        matches = []
+        for item in _memory_store:
+            chunk = item["chunk"]
+            if chunk.get("symbol_name") == symbol_name:
+                if not repository or repository in chunk.get("repository", ""):
+                    matches.append(SearchResult(
+                        id=item["id"],
+                        score=1.0,
+                        file_path=chunk.get("file_path", ""),
+                        chunk_type=chunk.get("chunk_type", ""),
+                        symbol_name=symbol_name,
+                        content=chunk.get("content", ""),
+                        metadata={"language": chunk.get("language")},
+                    ))
+        return matches[:20]
+
     return []
 
 
@@ -342,7 +418,11 @@ def delete_by_repository(repository: str) -> int:
             return 1
         except Exception:
             pass
-    return 0
+
+    global _memory_store
+    initial_len = len(_memory_store)
+    _memory_store = [m for m in _memory_store if repository not in m["chunk"].get("repository", "")]
+    return initial_len - len(_memory_store)
 
 
 def get_collection_stats() -> Dict:
@@ -374,5 +454,14 @@ def get_collection_stats() -> Dict:
             }
         except Exception:
             pass
+
+    if _memory_store:
+        return {
+            "status": "connected",
+            "provider": "local_memory",
+            "vectors": len(_memory_store),
+            "dimensions": 384,
+            "indexed": True,
+        }
 
     return {"status": "disconnected", "vectors": 0}

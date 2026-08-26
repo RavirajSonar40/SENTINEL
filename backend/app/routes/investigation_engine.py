@@ -34,7 +34,9 @@ router = APIRouter()
 
 def _get_user_github_token(user: User, db: Session, repository: str = None) -> Optional[str]:
     """Get the GitHub token for the authenticated user from their connected installation."""
+    import os
     from app.models.incident import GitHubInstallation
+    from app.core.config import settings
     # Try lookup by repo owner first (most reliable)
     if repository and "/" in repository:
         repo_owner = repository.split("/")[0]
@@ -47,7 +49,7 @@ def _get_user_github_token(user: User, db: Session, repository: str = None) -> O
     installation = db.query(GitHubInstallation).order_by(GitHubInstallation.updated_at.desc()).first()
     if installation and installation.tokens_encrypted:
         return installation.tokens_encrypted
-    return None
+    return settings.GITHUB_TOKEN or os.getenv("GITHUB_TOKEN") or None
 
 
 class InvestigateRequest(BaseModel):
@@ -633,6 +635,7 @@ async def _stream_investigation(
                     patch = await generate_patch(
                         root_cause,
                         fix.get("files_to_modify", []),
+                        repository=fix.get("repository") or repo_name,
                         token=github_token,
                     )
                     fix_model = ProposedFix(

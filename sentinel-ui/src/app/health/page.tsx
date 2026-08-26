@@ -8,7 +8,7 @@ import { getSystemHealth, SystemHealth, getMetrics } from "@/lib/api";
 export default function HealthPage() {
   const { token } = useAuth();
   const [health, setHealth] = useState<SystemHealth | null>(null);
-  const [metrics, setMetrics] = useState<any>(null);
+  const [metrics, setMetrics] = useState<{ requests?: { total?: number }; llm?: { total_calls?: number; total_cost_usd?: number }; tools?: { total_calls?: number } } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -18,7 +18,7 @@ export default function HealthPage() {
       getMetrics(token).catch(() => null),
     ]).then(([h, m]) => {
       setHealth(h);
-      setMetrics(m);
+      setMetrics(m as typeof metrics);
     }).finally(() => setLoading(false));
   }, [token]);
 

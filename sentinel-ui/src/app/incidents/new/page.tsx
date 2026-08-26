@@ -88,8 +88,8 @@ export default function NewIncident() {
         repository_ids: autoDetect ? [] : selectedRepos,
       });
       router.push(`/incidents/${incident.id}`);
-    } catch (err: any) {
-      setError(err.message || "Failed to create incident");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to create incident");
     } finally {
       setLoading(false);
     }

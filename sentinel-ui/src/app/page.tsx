@@ -43,7 +43,7 @@ export default function Dashboard() {
   const { token } = useAuth();
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
-  const [metrics, setMetrics] = useState<any>(null);
+  const [metrics, setMetrics] = useState<{ incidents?: { last_24h?: number } } | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -57,7 +57,7 @@ export default function Dashboard() {
     ]).then(([inc, appr, met, hlt]) => {
       setIncidents(inc);
       setApprovals(appr);
-      setMetrics(met);
+      setMetrics(met as typeof metrics);
       setHealth(hlt);
     }).finally(() => setLoading(false));
   }, [token]);

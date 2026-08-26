@@ -31,13 +31,13 @@ const statusDots: Record<string, string> = {
 
 export default function ServicesPage() {
   const { token } = useAuth();
-  const [health, setHealth] = useState<any>(null);
+  const [health, setHealth] = useState<{overall_health_score: number; services: ServiceHealth[]} | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!token) return;
     getServiceHealth(token)
-      .then(setHealth)
+      .then((data) => setHealth(data as typeof health))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [token]);
@@ -65,19 +65,19 @@ export default function ServicesPage() {
             <div className="bg-surface-container-low border border-outline-variant rounded p-4">
               <div className="text-[11px] text-on-surface-variant mb-1">Healthy</div>
               <div className="text-[32px] font-semibold text-green-400">
-                {health?.services.filter((s: any) => s.status === "healthy").length ?? 0}
+                {health?.services.filter((s: ServiceHealth) => s.status === "healthy").length ?? 0}
               </div>
             </div>
             <div className="bg-surface-container-low border border-outline-variant rounded p-4">
               <div className="text-[11px] text-on-surface-variant mb-1">Degraded</div>
               <div className="text-[32px] font-semibold text-yellow-400">
-                {health?.services.filter((s: any) => s.status === "degraded").length ?? 0}
+                {health?.services.filter((s: ServiceHealth) => s.status === "degraded").length ?? 0}
               </div>
             </div>
             <div className="bg-surface-container-low border border-outline-variant rounded p-4">
               <div className="text-[11px] text-on-surface-variant mb-1">Unhealthy / Critical</div>
               <div className="text-[32px] font-semibold text-red-400">
-                {health?.services.filter((s: any) => s.status === "unhealthy" || s.status === "critical").length ?? 0}
+                {health?.services.filter((s: ServiceHealth) => s.status === "unhealthy" || s.status === "critical").length ?? 0}
               </div>
             </div>
           </div>
@@ -96,7 +96,7 @@ export default function ServicesPage() {
               </div>
             ) : (
               <div className="divide-y divide-outline-variant">
-                {health.services.map((svc: any) => (
+                {health.services.map((svc: ServiceHealth) => (
                   <div key={svc.service} className="p-4 flex items-center gap-4 hover:bg-surface-container-high/50">
                     <div className={`w-2.5 h-2.5 rounded-full ${statusDots[svc.status]}`} />
                     <div className="flex-1 min-w-0">

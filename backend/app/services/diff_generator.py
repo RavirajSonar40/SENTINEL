@@ -109,8 +109,8 @@ Rules:
 
     for fpath in affected_files[:5]:
         content = None
-        if owner and repo and sha:
-            content = await download_file_from_github(owner, repo, fpath, sha, token=token)
+        if owner and repo:
+            content = await download_file_from_github(owner, repo, fpath, sha=sha, token=token)
         if content is None:
             full_path = os.path.join(project_path, fpath)
             try:

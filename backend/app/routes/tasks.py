@@ -17,7 +17,7 @@ CRON_SECRET = settings.CRON_SECRET
 async def process_pending_tasks(x_cron_secret: Optional[str] = Header(None)):
     """Process pending tasks from Redis queue. Called by GitHub Actions cron."""
     if x_cron_secret != CRON_SECRET:
-        return {"error": "unauthorized"}, 401
+        return {"error": "unauthorized"}
 
     from app.services.task_queue import (
         _get_redis,

@@ -71,63 +71,112 @@ def _scan_directory(local_path: str, extensions: List[str] = None) -> Dict[str, 
     return files
 
 
-async def _scan_github_repo(repository: str, branch: str = "main", github_token: str = None) -> Dict[str, str]:
+async def _scan_github_repo(repository: str, branch: Optional[str] = None, github_token: str = None) -> Dict[str, str]:
     """Scan a GitHub repository and read all matching source files."""
     import logging
+    import asyncio
+    import base64
     logger = logging.getLogger("sentinel.indexing")
     from app.services.github import GitHubClient
+    from app.core.config import settings
 
     files = {}
-    skip_dirs = ["node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build", "vendor"]
+    skip_dirs = ["node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build", "vendor", ".next"]
 
     if "/" not in repository:
         logger.warning(f"Invalid repository format: {repository}")
         return files
 
-    if not github_token:
+    token = github_token or settings.GITHUB_TOKEN or os.getenv("GITHUB_TOKEN")
+    if not token:
         logger.warning("No GitHub token — cannot index GitHub repository")
         return files
 
-    logger.info(f"Scanning GitHub repo {repository} (branch={branch}, token_len={len(github_token)})")
-    client = GitHubClient(token=github_token)
     owner, repo = repository.split("/", 1)
+    client = GitHubClient(token=token)
 
-    # Get repo tree recursively
     try:
         async with client._client() as http:
-            tree_resp = await http.get(f"/repos/{owner}/{repo}/git/trees/{branch}?recursive=1")
+            # 1. Determine the right branch (default branch or requested)
+            target_branch = branch
+            if not target_branch:
+                repo_resp = await http.get(f"/repos/{owner}/{repo}")
+                if repo_resp.status_code == 200:
+                    target_branch = repo_resp.json().get("default_branch", "main")
+                else:
+                    target_branch = "master"
+
+            logger.info(f"Scanning GitHub repo {repository} (branch={target_branch})")
+
+            # 2. Get tree recursively, with fallback branches if 404
+            tree_resp = await http.get(f"/repos/{owner}/{repo}/git/trees/{target_branch}?recursive=1")
+            if tree_resp.status_code != 200 and target_branch in ("main", "master"):
+                alt_branch = "master" if target_branch == "main" else "main"
+                logger.info(f"Branch '{target_branch}' returned {tree_resp.status_code}, trying alternative '{alt_branch}'")
+                tree_resp = await http.get(f"/repos/{owner}/{repo}/git/trees/{alt_branch}?recursive=1")
+                if tree_resp.status_code == 200:
+                    target_branch = alt_branch
+
             if tree_resp.status_code != 200:
-                logger.warning(f"GitHub tree API returned {tree_resp.status_code} for {repository}")
+                logger.warning(f"GitHub tree API returned {tree_resp.status_code} for {repository} on {target_branch}")
                 return files
+
             tree = tree_resp.json()
             tree_items = tree.get("tree", [])
             logger.info(f"Got {len(tree_items)} tree items for {repository}")
+
+            # Filter candidate blobs
+            candidates = []
             for item in tree_items:
-                if item["type"] != "blob":
+                if item.get("type") != "blob":
                     continue
-                path = item["path"]
-                # Check skip dirs
+                path = item.get("path", "")
                 if any(sd in path.split("/") for sd in skip_dirs):
                     continue
-                # Check extension
                 ext = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
                 if ext not in (".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".json", ".yaml", ".yml", ".toml", ".md"):
                     continue
-                # Skip very large files (likely not code)
                 if item.get("size", 0) > 500000:
                     continue
-                # Read file content
-                try:
-                    file_resp = await http.get(f"/repos/{owner}/{repo}/contents/{path}?ref={branch}")
-                    if file_resp.status_code == 200:
-                        file_data = file_resp.json()
-                        if file_data.get("encoding") == "base64":
-                            import base64
-                            content = base64.b64decode(file_data["content"]).decode("utf-8", errors="replace")
-                            if len(content) > 10:
-                                files[path] = content
-                except Exception:
-                    continue
+                candidates.append((path, item.get("sha")))
+
+            logger.info(f"Found {len(candidates)} matching source files to fetch for {repository}")
+
+            # 3. Parallel fetch file contents with semaphore
+            sem = asyncio.Semaphore(15)
+
+            async def fetch_file(path: str, blob_sha: Optional[str]):
+                async with sem:
+                    try:
+                        # Prefer blob API which is faster
+                        if blob_sha:
+                            blob_resp = await http.get(f"/repos/{owner}/{repo}/git/blobs/{blob_sha}")
+                            if blob_resp.status_code == 200:
+                                b_data = blob_resp.json()
+                                if b_data.get("encoding") == "base64":
+                                    content = base64.b64decode(b_data["content"]).decode("utf-8", errors="replace")
+                                    if len(content) > 5:
+                                        return path, content
+
+                        # Fallback to contents API
+                        file_resp = await http.get(f"/repos/{owner}/{repo}/contents/{path}?ref={target_branch}")
+                        if file_resp.status_code == 200:
+                            file_data = file_resp.json()
+                            if file_data.get("encoding") == "base64":
+                                content = base64.b64decode(file_data["content"]).decode("utf-8", errors="replace")
+                                if len(content) > 5:
+                                    return path, content
+                    except Exception:
+                        pass
+                return None, None
+
+            results = await asyncio.gather(*[fetch_file(p, sha) for p, sha in candidates[:150]])
+            for p, content in results:
+                if p and content:
+                    files[p] = content
+
+            logger.info(f"Successfully fetched {len(files)} files for {repository}")
+
     except Exception as e:
         logger.warning(f"GitHub tree scan failed for {repository}: {e}")
 
@@ -182,24 +231,30 @@ async def index_repository(
         # Index from local filesystem
         files = _scan_directory(request.local_path)
     elif request.repository and "/" in request.repository:
-        # Index from GitHub repository — get user's token by repo owner
+        # Index from GitHub repository — get user's token with fallback
         import logging
+        from app.core.config import settings
         _logger = logging.getLogger("sentinel.indexing")
-        from app.models.incident import GitHubInstallation
+        from app.models.incident import GitHubInstallation, Repository as RepoModel
         repo_owner = request.repository.split("/")[0]
         _logger.info(f"Looking up GitHub installation for owner={repo_owner}")
         installation = db.query(GitHubInstallation).filter(
             GitHubInstallation.account_login == repo_owner,
         ).first()
-        if installation:
+        if installation and installation.tokens_encrypted:
             user_token = installation.tokens_encrypted
-            _logger.info(f"Found installation for {repo_owner}, token={'set' if user_token else 'EMPTY'}")
+            _logger.info(f"Found installation for {repo_owner}")
         else:
-            # Fallback: get any installation
-            all_inst = db.query(GitHubInstallation).all()
-            _logger.warning(f"No installation for owner={repo_owner}, total installations={len(all_inst)}: {[(i.account_login, bool(i.tokens_encrypted)) for i in all_inst]}")
-            user_token = all_inst[0].tokens_encrypted if all_inst else None
-        files = await _scan_github_repo(request.repository, github_token=user_token)
+            all_inst = db.query(GitHubInstallation).order_by(GitHubInstallation.updated_at.desc()).all()
+            user_token = all_inst[0].tokens_encrypted if all_inst and all_inst[0].tokens_encrypted else None
+
+        user_token = user_token or settings.GITHUB_TOKEN or os.getenv("GITHUB_TOKEN")
+
+        # Get default branch if known
+        repo_record = db.query(RepoModel).filter(RepoModel.full_name == request.repository).first()
+        branch = repo_record.default_branch if repo_record else None
+
+        files = await _scan_github_repo(request.repository, branch=branch, github_token=user_token)
     elif request.file_paths:
         # Index specific files
         for fp in request.file_paths:

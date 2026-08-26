@@ -20,7 +20,7 @@ export default function AlertsPage() {
   useEffect(() => {
     if (!token) return;
     listAlertRules(token)
-      .then((data) => setRules(Array.isArray(data) ? data : (data as any)?.rules || []))
+      .then((data) => setRules(Array.isArray(data) ? data : (data as { rules?: AlertRule[] })?.rules || []))
       .catch(() => setRules([]))
       .finally(() => setLoading(false));
   }, [token]);

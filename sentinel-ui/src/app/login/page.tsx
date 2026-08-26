@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/AuthContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Logo from "@/components/Logo";
 
 export default function LoginPage() {
   const { login, token } = useAuth();
@@ -26,9 +27,9 @@ export default function LoginPage() {
       await login(username, password);
       console.log("Login successful, redirecting...");
       window.location.href = "/";
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Login error:", err);
-      setError(err.message || "Login failed — is the backend running on port 8000?");
+      setError(err instanceof Error ? err.message : "Login failed — is the backend running on port 8000?");
     } finally {
       setLoading(false);
     }
@@ -38,16 +39,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-surface-container-lowest flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
-          <img
-            src="/sentinel_logo.png"
-            alt="Sentinel"
-            className="w-16 h-16 mb-4"
-
-          />
-          <h1 className="text-2xl font-semibold text-on-surface">SENTINEL</h1>
-          <p className="text-[12px] text-on-surface-variant mt-1">
-            Incident Response Platform
-          </p>
+          <Logo size="xl" subtitle="Incident Response Platform" />
         </div>
 
         <form

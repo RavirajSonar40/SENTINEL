@@ -379,11 +379,28 @@ def generate_proposed_fixes(root_cause: Optional[Dict], state: InvestigationStat
         ev.get("file") for ev in root_cause.get("supporting_evidence", [])
         if ev.get("file")
     ]
-    if not evidence_files and state.evidence_collected:
-        evidence_files = [ev.get("file") for ev in state.evidence_collected if ev.get("file")]
+    if state.evidence_collected:
+        evidence_files.extend([ev.get("file") for ev in state.evidence_collected if ev.get("file")])
     
+    # Prioritize files that match keywords in incident title / description
+    incident_text = f"{state.incident_title} {state.incident_description}".lower()
+    
+    def file_relevance(fpath: str) -> float:
+        score = 0.0
+        fname = fpath.lower()
+        for term in incident_text.split():
+            if len(term) > 3 and term in fname:
+                score += 3.0
+        if any(w in incident_text for w in ("logo", "ui", "frontend", "sidebar", "topbar", "login", "header", "page", "view")):
+            if any(ext in fname for ext in (".tsx", ".jsx", "sentinel-ui", "components", "app/")):
+                score += 5.0
+            if any(ext in fname for ext in ("alembic", "test_", "conftest", ".md")):
+                score -= 2.0
+        return score
+
     # Deduplicate while preserving order
-    unique_files = list(dict.fromkeys(evidence_files))[:5]
+    unique_files = list(dict.fromkeys(evidence_files))
+    unique_files.sort(key=file_relevance, reverse=True)
 
     if category in ("code_change", "unknown") or not fixes:
         fixes.append({

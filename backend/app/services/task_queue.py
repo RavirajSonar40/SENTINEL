@@ -8,6 +8,11 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 import os
 
+try:
+    import redis.asyncio as redis
+except ImportError:
+    redis = None
+
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -38,19 +43,80 @@ _task_queue: asyncio.Queue = asyncio.Queue()
 _tasks: Dict[str, BackgroundTask] = {}
 _running = False
 _workers: list = []
+_redis_client = None
+_redis_queue_key = "sentinel:tasks:queue"
+_redis_processing_key = "sentinel:tasks:processing"
+_redis_task_prefix = "sentinel:task:"
+_redis_recovered = False
+
+
+def _redis_url() -> str:
+    return os.getenv("REDIS_URL", "")
+
+
+async def _get_redis():
+    global _redis_client
+    if redis is None or not _redis_url():
+        return None
+    if _redis_client is None:
+        _redis_client = redis.from_url(_redis_url(), decode_responses=True)
+    try:
+        await _redis_client.ping()
+        return _redis_client
+    except Exception:
+        return None
+
+
+def _serialize_task(task: BackgroundTask) -> str:
+    data = asdict(task)
+    data["status"] = task.status.value
+    return json.dumps(data)
+
+
+def _deserialize_task(raw: str) -> BackgroundTask:
+    data = json.loads(raw)
+    data["status"] = TaskStatus(data.get("status", TaskStatus.PENDING.value))
+    return BackgroundTask(**data)
+
+
+async def _persist_task(task: BackgroundTask):
+    client = await _get_redis()
+    if client:
+        await client.set(f"{_redis_task_prefix}{task.id}", _serialize_task(task))
+
+
+async def _recover_redis_tasks(client):
+    global _redis_recovered
+    if _redis_recovered:
+        return
+    pending = await client.lrange(_redis_processing_key, 0, -1)
+    if pending:
+        await client.lpush(_redis_queue_key, *pending)
+        await client.delete(_redis_processing_key)
+    _redis_recovered = True
 
 
 async def _worker():
     """Background worker that processes tasks."""
     global _running
     while _running:
-        try:
-            task = await asyncio.wait_for(_task_queue.get(), timeout=1.0)
-        except asyncio.TimeoutError:
-            continue
+        client = await _get_redis()
+        if client:
+            await _recover_redis_tasks(client)
+            raw = await client.brpoplpush(_redis_queue_key, _redis_processing_key, timeout=1)
+            if not raw:
+                continue
+            task = _deserialize_task(raw)
+            _tasks[task.id] = task
+        else:
+            try:
+                task = await asyncio.wait_for(_task_queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
 
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.now(timezone.utc).isoformat()
+        await _persist_task(task)
 
         try:
             handler = TASK_HANDLERS.get(task.task_type)
@@ -66,7 +132,11 @@ async def _worker():
             task.status = TaskStatus.FAILED
         finally:
             task.completed_at = datetime.now(timezone.utc).isoformat()
-            _task_queue.task_done()
+            await _persist_task(task)
+            if client:
+                await client.lrem(_redis_processing_key, 1, raw)
+            else:
+                _task_queue.task_done()
 
 
 def start_workers(count: int = 2):
@@ -91,7 +161,12 @@ async def submit_task(task_type: str, payload: Dict[str, Any]) -> BackgroundTask
     """Submit a task to the background queue."""
     task = BackgroundTask(task_type=task_type, payload=payload)
     _tasks[task.id] = task
-    await _task_queue.put(task)
+    client = await _get_redis()
+    if client:
+        await _persist_task(task)
+        await client.lpush(_redis_queue_key, _serialize_task(task))
+    else:
+        await _task_queue.put(task)
     return task
 
 

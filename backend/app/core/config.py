@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     GITHUB_REDIRECT_URI: str = "http://localhost:8000/github/callback"
 
     FRONTEND_URL: str = "http://localhost:3000"
+    REDIS_URL: str = ""
 
     class Config:
         env_file = ".env"

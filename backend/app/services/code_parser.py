@@ -173,10 +173,10 @@ def _parse_js(file_path: str, content: str, lang: str) -> List[CodeChunk]:
             i += 1
             continue
 
-        # Function declaration: function name() {}
-        match = re.match(r"^(export\s+)?(async\s+)?function\s+(\w+)\s*\(", line)
+        # Function declaration: function name() {}, export default function name() {}
+        match = re.match(r"^(export\s+(default\s+)?)?(async\s+)?function\s+(\w+)\s*\(", stripped)
         if match:
-            name = match.group(3)
+            name = match.group(4)
             start = i
             brace_count = 0
             body_lines = []
@@ -206,10 +206,10 @@ def _parse_js(file_path: str, content: str, lang: str) -> List[CodeChunk]:
             ))
             continue
 
-        # Arrow function: const name = () => {}
-        match = re.match(r"^(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(\(|async)", line)
+        # Arrow function: const name = () => {}, export const name = () => {}
+        match = re.match(r"^(export\s+(default\s+)?)?(const|let|var)\s+(\w+)\s*=\s*(async\s*)?(\(|[a-zA-Z0-9_]+\s*=>)", stripped)
         if match:
-            name = match.group(3)
+            name = match.group(4)
             start = i
             brace_count = 0
             body_lines = []

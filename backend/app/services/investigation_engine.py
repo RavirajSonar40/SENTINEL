@@ -431,14 +431,25 @@ def _generate_default_tasks(state: InvestigationState) -> List[InvestigationTask
         ))
         task_id += 1
 
+    # Extract explicitly mentioned source files from incident title and description
+    import re
+    mentioned = re.findall(r"[\w\-\./\\]+\.(?:tsx|ts|jsx|js|py|json|yaml|yml)", f"{state.incident_title} {state.incident_description}")
+    for fpath in list(dict.fromkeys(mentioned))[:5]:
+        tasks.append(InvestigationTask(
+            id=f"task_{task_id}",
+            task_type="read",
+            description=f"Inspect mentioned file {fpath}",
+            tool_name="read_file",
+            parameters={"file_path": fpath.replace("\\", "/"), "repository": state.repository, "_github_token": state.github_token},
+        ))
+        task_id += 1
+
     tasks.append(InvestigationTask(
         id=f"task_{task_id}", task_type="history", description="Check recent commits",
         tool_name="get_git_history",
-        parameters={"repository": state.repository},
+        parameters={"repository": state.repository, "_github_token": state.github_token},
     ))
     task_id += 1
-
-    return tasks
 
     return tasks
 
@@ -610,6 +621,15 @@ async def run_investigation(state: InvestigationState, db=None, investigation_id
             state.tasks_failed += 1
         else:
             state.tasks_completed += 1
+            if isinstance(result, dict) and result.get("content"):
+                state.evidence_collected.append({
+                    "source": "file_read",
+                    "tool": task.tool_name,
+                    "file": result.get("file_path"),
+                    "symbol": result.get("file_path", "").split("/")[-1],
+                    "score": 0.95,
+                    "content_preview": result.get("content", "")[:500],
+                })
 
     # 3. Assess confidence
     total = state.tasks_completed + state.tasks_failed

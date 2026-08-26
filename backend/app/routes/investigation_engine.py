@@ -515,8 +515,6 @@ async def _stream_investigation(
         )
 
         persist_db = SessionLocal()
-        saved_fixes = []
-        published_prs = []
         try:
             for ev_data in state.evidence_collected[:20]:
                 evidence = EvidenceModel(
@@ -578,7 +576,6 @@ async def _stream_investigation(
                     )
                     persist_db.add(fix_model)
                     persist_db.flush()
-                    saved_fixes.append(fix_model)
                     for file_path in fix.get("files_to_modify", [])[:5]:
                         change = next(
                             (item for item in patch.get("changes", []) if item.get("file") == file_path),
@@ -615,21 +612,6 @@ async def _stream_investigation(
             )
             persist_db.commit()
 
-            # Publish guarded draft PRs for every repository-specific fix.
-            from app.routes.remediation import publish_draft_pr
-            for fix_model in saved_fixes:
-                try:
-                    pr_result = await publish_draft_pr(fix_model, incident_record, persist_db)
-                    published_prs.append({
-                        "repository": fix_model.repository,
-                        "pr_url": pr_result.pr_url,
-                        "pr_number": fix_model.pr_number,
-                    })
-                except Exception as pr_error:
-                    published_prs.append({
-                        "repository": fix_model.repository,
-                        "error": str(pr_error.detail if isinstance(pr_error, HTTPException) else pr_error),
-                    })
         except Exception as persist_err:
             try:
                 persist_db.rollback()
@@ -649,7 +631,6 @@ async def _stream_investigation(
             "hypotheses_count": len(hypotheses),
             "tasks_completed": state.tasks_completed,
             "tasks_failed": state.tasks_failed,
-            "pull_requests": published_prs,
         })
 
     except Exception as e:

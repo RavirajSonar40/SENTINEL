@@ -284,6 +284,11 @@ async def generate_draft_pr(
     ).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    if fix.status != FixStatus.APPROVED.value:
+        raise HTTPException(
+            status_code=409,
+            detail="Fix must be explicitly approved before creating a draft PR",
+        )
 
     incident = db.query(Incident).filter(
         Incident.id == investigation.incident_id

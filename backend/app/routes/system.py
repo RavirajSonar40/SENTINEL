@@ -167,13 +167,13 @@ def toggle_alert_rule(rule_id: str, current_user: User = Depends(get_current_use
 @router.get("/system/health")
 def get_system_health(current_user: User = Depends(get_current_user)):
     import psycopg
-    import os
+    from app.core.config import settings
 
     checks = {}
 
     # Postgres
     try:
-        conn = psycopg.connect(os.getenv("DATABASE_URL", "postgresql://sentinel:sentinel_dev_2026@localhost:5432/sentinel"))
+        conn = psycopg.connect(settings.DATABASE_URL)
         cur = conn.cursor()
         cur.execute("SELECT 1")
         cur.close()
@@ -185,7 +185,7 @@ def get_system_health(current_user: User = Depends(get_current_user)):
     # Qdrant
     try:
         import httpx
-        resp = httpx.get("http://localhost:6333/healthz", timeout=3)
+        resp = httpx.get(f"{settings.QDRANT_URL}/healthz", timeout=3)
         checks["qdrant"] = {"status": "operational" if resp.status_code == 200 else "error"}
     except Exception:
         checks["qdrant"] = {"status": "error", "error": "Connection refused"}
@@ -193,7 +193,7 @@ def get_system_health(current_user: User = Depends(get_current_user)):
     # Redis
     try:
         import httpx
-        resp = httpx.get("http://localhost:6379", timeout=3)
+        resp = httpx.get(settings.REDIS_URL or "http://localhost:6379", timeout=3)
         checks["redis"] = {"status": "operational"}
     except Exception:
         checks["redis"] = {"status": "error", "error": "Connection refused"}

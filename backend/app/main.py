@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-import os
 import logging
 
 logger = logging.getLogger("sentinel.startup")
@@ -38,7 +37,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS — allow frontend origins
 frontend_url = settings.FRONTEND_URL
-extra_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+extra_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 allowed_origins = list({frontend_url, "http://localhost:3000", "http://127.0.0.1:3000", *extra_origins})
 
 app.add_middleware(
@@ -46,8 +45,8 @@ app.add_middleware(
     allow_origin_regex=r"https://.*\.vercel\.app$|http://localhost:\d+$",
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Routes

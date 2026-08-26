@@ -18,7 +18,11 @@ class Settings(BaseSettings):
     GITHUB_REDIRECT_URI: str = "http://localhost:8000/github/callback"
 
     FRONTEND_URL: str = "http://localhost:3000"
+    CORS_ORIGINS: str = ""
     REDIS_URL: str = ""
+    QDRANT_URL: str = "http://localhost:6333"
+
+    LOG_LEVEL: str = "INFO"
 
     class Config:
         env_file = ".env"

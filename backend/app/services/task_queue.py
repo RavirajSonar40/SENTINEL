@@ -6,12 +6,13 @@ from typing import Dict, Any, Optional, Callable, Awaitable
 from datetime import datetime, timezone
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-import os
 
 try:
     import redis.asyncio as redis
 except ImportError:
     redis = None
+
+from app.core.config import settings
 
 
 class TaskStatus(str, Enum):
@@ -52,7 +53,7 @@ _redis_recovered = False
 
 
 def _redis_url() -> str:
-    return os.getenv("REDIS_URL", "")
+    return settings.REDIS_URL
 
 
 async def _get_redis():
@@ -197,6 +198,27 @@ def list_tasks(status: Optional[TaskStatus] = None, limit: int = 50) -> list:
     return tasks[:limit]
 
 
+async def get_queue():
+    """Get the active queue (Redis or in-memory)."""
+    client = await _get_redis()
+    if client:
+        return _RedisQueue(client)
+    return _task_queue
+
+
+class _RedisQueue:
+    """Adapter to make Redis queue compatible with asyncio.Queue.get()."""
+
+    def __init__(self, client):
+        self._client = client
+
+    async def get(self):
+        raw = await self._client.brpoplpush(_redis_queue_key, _redis_processing_key, timeout=5)
+        if raw:
+            return _deserialize_task(raw)
+        raise asyncio.TimeoutError()
+
+
 def update_task_progress(task_id: str, progress: int, message: str = ""):
     """Update task progress."""
     task = _tasks.get(task_id)
@@ -292,3 +314,7 @@ async def handle_detect_anomaly(task: BackgroundTask) -> Dict:
         "rules_triggered": len(triggered),
         "triggered_rules": triggered,
     }
+
+
+# Exported for worker.py
+_registered_handlers = TASK_HANDLERS

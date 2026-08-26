@@ -1,5 +1,4 @@
 """Historical incident search — find similar past incidents via Qdrant."""
-import os
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 
@@ -14,9 +13,10 @@ except ImportError:
     HAS_QDRANT = False
 
 from app.services.embeddings import embed_texts, get_config
+from app.core.config import settings
 
 HISTORY_COLLECTION = "sentinel_incident_history"
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_URL = settings.QDRANT_URL
 
 _client = None
 

@@ -1,5 +1,4 @@
 """Qdrant vector store — index and search code embeddings."""
-import os
 import uuid
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
@@ -15,9 +14,10 @@ except ImportError:
     HAS_QDRANT = False
 
 from app.services.embeddings import embed_texts, get_config
+from app.core.config import settings
 
 
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_URL = settings.QDRANT_URL
 COLLECTION_NAME = "sentinel_code"
 
 

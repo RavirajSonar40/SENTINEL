@@ -1,6 +1,7 @@
 services:
+  # --- API Service ---
   - type: web
-    name: sentinel-backend
+    name: sentinel-api
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     envVars:
@@ -14,11 +15,50 @@ services:
         sync: false
       - key: GITHUB_CLIENT_SECRET
         sync: false
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
       - key: GITHUB_REDIRECT_URI
         sync: false
       - key: FRONTEND_URL
         sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
       - key: PYTHON_VERSION
         value: "3.12"
     healthCheckPath: /health
+    autoDeploy: true
+
+  # --- Worker Service ---
+  - type: worker
+    name: sentinel-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    startCommand: sh -c "alembic upgrade head && python worker.py"
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: LLM_PROVIDER
+        value: mock
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PYTHON_VERSION
+        value: "3.12"
     autoDeploy: true

@@ -128,10 +128,28 @@ def generate_hypotheses(state: InvestigationState) -> List[Hypothesis]:
             evidence_groups[file] = []
         evidence_groups[file].append(ev)
 
-    for file_path, file_evidence in list(evidence_groups.items())[:5]:
+    incident_lower = f"{state.incident_title} {state.incident_description}".lower()
+
+    def group_score(item):
+        fpath, evs = item
+        max_ev_score = max((e.get("score", 0.5) for e in evs), default=0.5)
+        keyword_bonus = sum(2.0 for term in incident_lower.split() if len(term) > 3 and term in fpath.lower())
+        if any(w in incident_lower for w in ("logo", "ui", "frontend", "sidebar", "topbar", "login", "header")):
+            if any(ext in fpath.lower() for ext in (".tsx", ".jsx", "sentinel-ui", "components", "app/")):
+                keyword_bonus += 5.0
+            if any(ext in fpath.lower() for ext in ("alembic", "test_", "conftest", ".md")):
+                keyword_bonus -= 3.0
+        return max_ev_score + keyword_bonus
+
+    sorted_groups = sorted(evidence_groups.items(), key=group_score, reverse=True)
+
+    for file_path, file_evidence in sorted_groups[:8]:
         symbols = [e.get("symbol") for e in file_evidence if e.get("symbol")]
         symbol_str = ", ".join(symbols[:3]) if symbols else file_path.replace("\\", "/").split("/")[-1]
         label = f"Issue in {symbol_str}"
+
+        # High confidence if domain-matched
+        conf = "high" if group_score((file_path, file_evidence)) > 3.0 else "medium"
 
         if label not in seen:
             seen.add(label)
@@ -139,7 +157,7 @@ def generate_hypotheses(state: InvestigationState) -> List[Hypothesis]:
                 id=f"hyp_{len(hypotheses)}",
                 label=label,
                 description=f"Code in {file_path} may contain the bug based on semantic similarity to error signals",
-                confidence="medium",
+                confidence=conf,
                 severity="medium",
                 category="code_change",
                 supporting_evidence=file_evidence,

@@ -297,7 +297,7 @@ export default function InvestigationDetail() {
           {/* Right Column - Investigation Details */}
           <div className="flex-1 flex flex-col gap-1 min-w-0">
             {/* Run AI Investigation Button */}
-            {(!investigation || investigation.status === "created" || investigation.status === "investigating") && (
+            {(!investigation || ["created", "planning", "investigating"].includes(investigation.status)) && (
               <div className="bg-primary/5 border border-primary/20 rounded p-4">
                 <div className="flex items-center justify-between">
                   <div>

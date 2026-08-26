@@ -35,7 +35,10 @@ htmlcov/
 # Alembic
 alembic/versions/*.pyc
 
-# Node (sentinel-ui)
+# Sentinel
 sentinel-ui/node_modules/
 sentinel-ui/.next/
 sentinel-ui/out/
+
+# Local docs
+# Sentinel.txt

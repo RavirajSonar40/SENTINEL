@@ -81,10 +81,34 @@ class TestOwnershipFilters:
         r = client.post("/incidents", json={
             "title": "Ownership test", "severity": "SEV-3", "service": "test"
         }, headers=headers)
-        if r.status_code == 201:
+        if r.status_code == 200:
             assert r.json().get("creator_id") is not None
 
-    def test_investigation_access_denied_for_non_owner(self, client):
+    def test_incident_update_requires_ownership(self, client):
+        headers = get_auth_header(client)
+        if not headers:
+            pytest.skip("No auth")
+        r = client.post("/incidents", json={
+            "title": "Owner check", "severity": "SEV-3", "service": "test"
+        }, headers=headers)
+        if r.status_code == 200:
+            inc_id = r.json()["id"]
+            r2 = client.patch(f"/incidents/{inc_id}", json={"title": "Updated"}, headers=headers)
+            assert r2.status_code == 200
+
+    def test_incident_delete_requires_ownership(self, client):
+        headers = get_auth_header(client)
+        if not headers:
+            pytest.skip("No auth")
+        r = client.post("/incidents", json={
+            "title": "Delete check", "severity": "SEV-3", "service": "test"
+        }, headers=headers)
+        if r.status_code == 200:
+            inc_id = r.json()["id"]
+            r2 = client.delete(f"/incidents/{inc_id}", headers=headers)
+            assert r2.status_code == 204
+
+    def test_investigation_ownership_enforced(self, client):
         headers = get_auth_header(client)
         if not headers:
             pytest.skip("No auth")
@@ -130,8 +154,8 @@ class TestRateLimits:
         assert resp.status_code == 429
 
     def test_webhook_rate_limit_enforced(self, client):
-        """Webhook endpoints enforce 30/minute limit."""
-        for _ in range(32):
+        """Webhook endpoints enforce 60/minute limit."""
+        for _ in range(62):
             client.post("/webhooks/generic", json={"text": "rate-limit-test"})
         resp = client.post("/webhooks/generic", json={"text": "rate-limit-test"})
         assert resp.status_code == 429

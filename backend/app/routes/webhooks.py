@@ -331,7 +331,7 @@ def create_incident_from_alert(
 # --- Webhook Endpoints ---
 
 @router.post("/webhooks/pagerduty")
-@limiter.limit("30/minute")
+@limiter.limit("60/minute")
 async def receive_pagerduty(request: Request, db: Session = Depends(get_db)):
     """Receive PagerDuty webhook."""
     payload = await request.json()
@@ -342,7 +342,7 @@ async def receive_pagerduty(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/webhooks/datadog")
-@limiter.limit("30/minute")
+@limiter.limit("60/minute")
 async def receive_datadog(request: Request, db: Session = Depends(get_db)):
     """Receive Datadog alert webhook."""
     payload = await request.json()
@@ -353,7 +353,7 @@ async def receive_datadog(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/webhooks/sentry")
-@limiter.limit("30/minute")
+@limiter.limit("60/minute")
 async def receive_sentry(request: Request, db: Session = Depends(get_db)):
     """Receive Sentry webhook."""
     payload = await request.json()
@@ -364,7 +364,7 @@ async def receive_sentry(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/webhooks/slack")
-@limiter.limit("30/minute")
+@limiter.limit("60/minute")
 async def receive_slack(request: Request, db: Session = Depends(get_db)):
     """Receive Slack alert."""
     payload = await request.json()
@@ -375,7 +375,7 @@ async def receive_slack(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/webhooks/generic")
-@limiter.limit("30/minute")
+@limiter.limit("60/minute")
 async def receive_generic(request: Request, db: Session = Depends(get_db)):
     """Receive generic webhook — auto-detects source from payload."""
     payload = await request.json()

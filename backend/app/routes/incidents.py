@@ -69,6 +69,7 @@ class IncidentOut(BaseModel):
     resolved_at: Optional[datetime]
     created_at: datetime
     updated_at: Optional[datetime]
+    creator_id: Optional[str]
     repositories: List[RepositoryOut] = []
     investigation: Optional[InvestigationSummary] = None
 
@@ -305,6 +306,7 @@ def _incident_to_out(incident: Incident, db: Session) -> dict:
         resolved_at=incident.resolved_at,
         created_at=incident.created_at,
         updated_at=incident.updated_at,
+        creator_id=str(incident.creator_id) if incident.creator_id else None,
         repositories=repos,
         investigation=inv_summary,
     )

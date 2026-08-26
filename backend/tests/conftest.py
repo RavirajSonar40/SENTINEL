@@ -8,6 +8,15 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Clear slowapi rate limit state between every test."""
+    from app.core.rate_limit import limiter
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
 @pytest.fixture
 def mock_db():
     """Mock database session."""

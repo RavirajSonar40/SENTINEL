@@ -415,21 +415,29 @@ def generate_proposed_fixes(root_cause: Optional[Dict], state: InvestigationStat
     # Prioritize files that match keywords in incident title / description
     incident_text = f"{state.incident_title} {state.incident_description}".lower()
     
+    # Check if incident explicitly requested a file action (e.g. 'add readme.md', 'create hello.txt')
+    task_match = re.search(r'(?:add|create|update|implement|modify|generate|fix|write)\s+(?:a\s+)?(?:comprehensive\s+|simple\s+)?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)', incident_text)
+    explicit_file = task_match.group(1).strip() if task_match else None
+
     def file_relevance(fpath: str) -> float:
         score = 0.0
         fname = fpath.lower()
+        if explicit_file and (explicit_file.lower() == fname or explicit_file.lower() in fname):
+            return 100.0
         for term in incident_text.split():
             if len(term) > 3 and term in fname:
                 score += 3.0
         if any(w in incident_text for w in ("logo", "ui", "frontend", "sidebar", "topbar", "login", "header", "page", "view")):
             if any(ext in fname for ext in (".tsx", ".jsx", "sentinel-ui", "components", "app/")):
                 score += 5.0
-            if any(ext in fname for ext in ("alembic", "test_", "conftest", ".md")):
-                score -= 2.0
+            if any(ext in fname for ext in ("alembic", "test_", "conftest", "repositories.py")):
+                score -= 5.0
         return score
 
     # Deduplicate while preserving order
     unique_files = list(dict.fromkeys(evidence_files))
+    if explicit_file:
+        unique_files = [explicit_file] + [f for f in unique_files if f.lower() != explicit_file.lower()]
     unique_files.sort(key=file_relevance, reverse=True)
 
     if category in ("code_change", "unknown") or not fixes:

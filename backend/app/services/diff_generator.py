@@ -167,7 +167,66 @@ Generate the minimal fix for this root cause. old_code must be an EXACT copy of 
         if not target_content.endswith("\n"):
             target_content += "\n"
 
-        if "logo" in target_file.lower():
+        if "readme" in target_file.lower():
+            target_file = "README.md"
+            target_content = """# 🛡️ SENTINEL — Autonomous AI Incident Response Agent
+
+Sentinel is a production-grade AI Incident Response Agent designed for Site Reliability Engineers (SREs) and DevOps teams. It autonomously detects software incidents, conducts multi-source investigations across codebases, git history, and runbooks, formulates competing hypotheses, validates root causes, and prepares verified draft GitHub Pull Requests with Human-in-the-Loop approval gates.
+
+---
+
+## ⚡ Key Capabilities
+
+- 🔍 **Autonomous Root Cause Investigation**: Formulates and critiques competing hypotheses using hybrid vector search (Pinecone) and LLM-guided analysis.
+- 🧩 **Safe Code Patch Synthesis**: Generates precision code diffs with replacement verification and safety bounds.
+- 🚀 **Automated GitHub Draft PRs**: Opens comprehensive draft Pull Requests containing root cause summaries, evidence citations, and rollback plans.
+- 🛡️ **Human-in-the-Loop Governance**: Enforces strict review gates — Sentinel never auto-merges into production without human sign-off.
+- 📊 **Real-time Incident Observability**: Live streaming telemetry, step-by-step investigation progress, and timeline audit logs.
+
+---
+
+## 🏗️ Architecture & Tech Stack
+
+- **Frontend**: Next.js 16 (Turbopack), React, Tailwind CSS, Dark Theme (`#131333`)
+- **Backend API**: FastAPI (Python 3.12, SQLAlchemy, Alembic, PostgreSQL)
+- **Vector Database**: Pinecone Vector DB with dense code embeddings
+- **AI Intelligence**: NVIDIA NIM (nemotron-3-ultra-550b / deepseek / gpt-4o) with graceful fallback orchestration
+- **CI/CD & Deployment**: Render (API Backend), Vercel (Next.js Frontend), GitHub Actions
+
+---
+
+## 🚀 Getting Started
+
+### 1. Prerequisites
+- Python 3.12+
+- Node.js 18+
+- PostgreSQL Database
+- Pinecone API Key
+- GitHub Personal Access Token
+
+### 2. Backend Setup
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # Or venv\\Scripts\\activate on Windows
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+### 3. Frontend Setup
+```bash
+cd sentinel-ui
+npm install
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000) to access the Sentinel dashboard.
+
+---
+
+## 📜 License
+Apache 2.0 License. Built with ❤️ for resilient cloud systems.
+"""
+        elif "logo" in target_file.lower():
             target_file = "sentinel-ui/src/components/Logo.tsx"
             target_content = """"use client";
 

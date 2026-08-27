@@ -311,10 +311,10 @@ async def publish_draft_pr(
                 remote_content = base64.b64decode(encoded).decode("utf-8")
             except Exception as exc:
                 raise HTTPException(502, f"Could not decode {path} from GitHub: {exc}")
-            if old_code and remote_content.count(old_code) == 1:
+            if old_code and old_code in remote_content:
                 files.append({"path": path, "content": remote_content.replace(old_code, new_code, 1)})
             else:
-                files.append({"path": path, "content": new_code if len(new_code) > len(old_code) else remote_content})
+                raise HTTPException(409, f"Unsafe patch rejected: Target code snippet was not found in {path}")
 
     # Gather context for comprehensive PR body
     investigation = db.query(Investigation).filter(

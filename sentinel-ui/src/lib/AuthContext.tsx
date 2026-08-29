@@ -49,8 +49,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading: true,
     });
 
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
+
     fetch(`${API_BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
     })
       .then(async (res) => {
         if (res.status === 401) {
@@ -76,6 +80,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setState((current) => ({ ...current, isLoading: false }));
       });
+
+    return () => window.clearTimeout(timeout);
   }, []);
 
   const login = async (username: string, password: string) => {

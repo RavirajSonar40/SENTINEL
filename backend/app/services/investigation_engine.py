@@ -63,7 +63,7 @@ class Tool:
 
 async def tool_search_code(args: Dict) -> Dict:
     """Search codebase by semantic similarity."""
-    query = args.get("query", "")
+    query = args.get("query", "") or args.get("description", "") or "source code relevant to the incident"
     repository = args.get("repository")
     before_time = args.get("before_time")
     results = hybrid_search(
@@ -522,6 +522,14 @@ async def run_investigation(state: InvestigationState, db=None, investigation_id
 
     # 1. Plan tasks (LLM-powered)
     tasks = await generate_tasks_llm(state)
+
+    # Keep the selected repository attached to every search task. LLM-planned
+    # tasks often omit optional parameters, which otherwise turns a scoped
+    # investigation into an empty global vector query.
+    for task in tasks:
+        if task.tool_name == "search_code":
+            task.parameters.setdefault("repository", state.repository)
+            task.parameters.setdefault("query", task.description or state.incident_description)
 
     # Inject user's GitHub token into tool parameters for GitHub-dependent tools
     if github_token:

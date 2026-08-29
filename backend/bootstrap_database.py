@@ -9,7 +9,7 @@ continue through the normal Alembic upgrade path.
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from app.core.database import Base, engine
 
@@ -21,6 +21,13 @@ def initialize_database() -> None:
         return
 
     Base.metadata.create_all(bind=engine)
+    # Alembic's default version column is VARCHAR(32), but this repository's
+    # descriptive revision identifiers are longer than 32 characters.
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE alembic_version ("
+            "version_num VARCHAR(255) NOT NULL PRIMARY KEY)"
+        ))
     alembic_config = Config("alembic.ini")
     # The declarative schema includes all tables, but migration 036 also
     # installs the database-level forensic immutability triggers. Run that

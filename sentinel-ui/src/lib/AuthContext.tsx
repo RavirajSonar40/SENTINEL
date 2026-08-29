@@ -27,13 +27,15 @@ function clearAuth() {
 }
 
 function getInitialAuth(): AuthState {
+  // Keep the first render identical on the server and client. Auth storage is
+  // read after hydration so protected pages never trigger a React mismatch.
   if (typeof window === "undefined") return { token: null, userId: null, username: null, isLoading: true };
   const token = localStorage.getItem("sentinel_token");
   const userId = localStorage.getItem("sentinel_user_id");
   const username = localStorage.getItem("sentinel_username");
   // The token is the source of truth. Profile fields are cacheable metadata
   // and may be absent after a browser cleanup or an older deployment.
-  if (!token) return { token: null, userId: null, username: null, isLoading: false };
+  if (!token) return { token: null, userId: null, username: null, isLoading: true };
   return { token, userId, username, isLoading: true };
 }
 
@@ -42,7 +44,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const { token } = state;
-    if (!token) return;
+    if (!token) {
+      setState((current) => current.isLoading ? { ...current, isLoading: false } : current);
+      return;
+    }
 
     fetch(`${API_BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },

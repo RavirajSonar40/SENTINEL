@@ -23,18 +23,19 @@ export default function Footer() {
     const token = localStorage.getItem("sentinel_token");
     if (!token) return;
 
-    fetch(`${API_BASE}/health`, {
+    fetch(`${API_BASE}/system/health`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
       .then((data) => {
+        const checks = data.checks || {};
         setStatus({
-          postgres: data.database === "connected" ? "Connected" : "Disconnected",
-          vectorStore: data.vector_store === "connected" ? "Connected" : "Unavailable",
-          aiModel: data.llm_provider || "Unknown",
-          uptime: data.uptime_seconds
-            ? `${Math.floor(data.uptime_seconds / 3600)}h ${Math.floor((data.uptime_seconds % 3600) / 60)}m`
-            : "—",
+          postgres: checks.postgres?.status === "operational" ? "Connected" : "Disconnected",
+          vectorStore: (checks.vector_store || checks.qdrant)?.status === "operational"
+            ? "Connected"
+            : "Unavailable",
+          aiModel: checks.llm?.model || checks.llm?.provider || "Unknown",
+          uptime: "—",
         });
       })
       .catch(() => {});

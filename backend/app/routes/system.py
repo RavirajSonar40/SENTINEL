@@ -182,13 +182,18 @@ def get_system_health(current_user: User = Depends(get_current_user)):
     except Exception as e:
         checks["postgres"] = {"status": "error", "error": str(e)}
 
-    # Qdrant
+    # Canonical vector store (Pinecone in deployed environments).
     try:
-        import httpx
-        resp = httpx.get(f"{settings.QDRANT_URL}/healthz", timeout=3)
-        checks["qdrant"] = {"status": "operational" if resp.status_code == 200 else "error"}
+        if settings.PINECONE_API_KEY and settings.PINECONE_INDEX:
+            from app.services.vector_store import _get_pinecone
+            checks["vector_store"] = {
+                "status": "operational" if _get_pinecone() is not None else "error",
+                "provider": "pinecone",
+            }
+        else:
+            checks["vector_store"] = {"status": "error", "error": "Pinecone is not configured"}
     except Exception:
-        checks["qdrant"] = {"status": "error", "error": "Connection refused"}
+        checks["vector_store"] = {"status": "error", "error": "Vector store unavailable"}
 
     # Redis
     try:

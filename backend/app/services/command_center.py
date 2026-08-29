@@ -153,7 +153,10 @@ def get_command_center_overview(db: Session, organization_id: UUID) -> CommandCe
         .filter(
             Investigation.organization_id == organization_id,
             Investigation.parent_investigation_id == None,
-            Investigation.status.in_(["running", "analyzing", "hypothesizing"]),
+            # PostgreSQL stores this SAEnum by member name (uppercase), not
+            # by the Python enum value.  Passing the lowercase legacy label
+            # makes every overview request fail with InvalidTextRepresentation.
+            Investigation.status.in_(["RUNNING", "ANALYZING", "GENERATING_HYPOTHESES"]),
         )
         .count()
     )

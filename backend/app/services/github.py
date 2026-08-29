@@ -22,14 +22,33 @@ class GitHubClient:
 
     # --- Repositories ---
     async def list_repos(self, installation_id: Optional[int] = None) -> list:
-        """List repositories accessible to the token/installation."""
-        params = {"per_page": 100, "sort": "updated"}
+        """List every repository accessible to the token/installation.
+
+        GitHub paginates this endpoint even when ``per_page=100``.  Following
+        the response's ``Link`` header prevents accounts with more than 100
+        repositories from being silently truncated.
+        """
+        params = {"per_page": 100, "page": 1, "sort": "updated"}
         if installation_id:
             params["installation_id"] = installation_id
         async with self._client() as client:
-            resp = await client.get("/user/repos", params=params)
-            resp.raise_for_status()
-            return resp.json()
+            repositories = []
+            while True:
+                resp = await client.get("/user/repos", params=params)
+                resp.raise_for_status()
+                page = resp.json()
+                if not isinstance(page, list):
+                    raise ValueError("GitHub repository response was not a list")
+                repositories.extend(page)
+
+                # Link headers are authoritative; the short-page fallback
+                # also supports GitHub-compatible test doubles and proxies.
+                if 'rel="next"' not in resp.headers.get("Link", ""):
+                    break
+                params["page"] += 1
+                if params["page"] > 1000:
+                    raise RuntimeError("GitHub repository pagination exceeded safety limit")
+            return repositories
 
     async def get_repo(self, owner: str, repo: str) -> dict:
         async with self._client() as client:

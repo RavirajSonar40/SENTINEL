@@ -64,7 +64,7 @@ export interface CorrelationSummary {
   failing_probes: number;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 function getAuthHeaders(token?: string): HeadersInit {
   const headers: Record<string, string> = {

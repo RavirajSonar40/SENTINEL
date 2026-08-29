@@ -2,7 +2,7 @@
  * Phase 17: Security Incident Mode, Evidence Manifests, Dual Sign-Off & Audit Chaining API Client
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 export interface SecurityCaseItem {
   id: string;

@@ -293,7 +293,7 @@ async def trigger_investigation(
 
 
 async def _stream_investigation(
-    inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request_service, github_token=None,
+    inc_id, inv_id, organization_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request_service, github_token=None,
 ) -> AsyncGenerator[str, None]:
     """Generator that yields SSE events during investigation."""
     def emit(event_type: str, data: dict):
@@ -602,6 +602,7 @@ async def _stream_investigation(
         try:
             for ev_data in state.evidence_collected[:20]:
                 evidence = EvidenceModel(
+                    organization_id=organization_id,
                     investigation_id=inv_id,
                     incident_id=inc_id,
                     source_type=EvidenceSourceType.COMMIT.value if "code" in ev_data.get("source", "") else EvidenceSourceType.FILE.value,
@@ -616,6 +617,7 @@ async def _stream_investigation(
 
             for h in hypotheses[:10]:
                 hyp_model = HypothesisModel(
+                    organization_id=organization_id,
                     investigation_id=inv_id,
                     incident_id=inc_id,
                     label=h.label,
@@ -631,6 +633,7 @@ async def _stream_investigation(
             rc = None
             if root_cause:
                 rc = RootCause(
+                    organization_id=organization_id,
                     investigation_id=inv_id,
                     incident_id=inc_id,
                     summary=root_cause.get("label", "Root Cause"),
@@ -649,6 +652,7 @@ async def _stream_investigation(
                         token=github_token,
                     )
                     fix_model = ProposedFix(
+                        organization_id=organization_id,
                         investigation_id=inv_id,
                         root_cause_id=rc.id,
                         incident_id=inc_id,
@@ -784,7 +788,7 @@ async def trigger_investigation_stream(
     repo_name = request.repository
     user_token = _get_user_github_token(current_user, db, repository=repo_name)
     return StreamingResponse(
-        _stream_investigation(inc_id, inv_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request.service, github_token=user_token),
+        _stream_investigation(inc_id, inv_id, current_user.organization_id, inc_title, inc_desc, inc_sig, inc_repositories, inc_service, repo_name, request.service, github_token=user_token),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

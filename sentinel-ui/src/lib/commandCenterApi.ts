@@ -2,7 +2,9 @@
  * Command Center API client for Sentinel Operations Command Center (Phase 15).
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Render/Vercel environment values are commonly entered with a trailing `/`.
+// Normalize it so endpoint paths never become `//command-center/...`.
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 function getAuthHeaders(): HeadersInit {
   const token = typeof window !== "undefined" ? localStorage.getItem("sentinel_token") : null;

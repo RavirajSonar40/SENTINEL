@@ -57,15 +57,17 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS — allow frontend origins
-frontend_url = settings.FRONTEND_URL
-extra_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+frontend_url = settings.FRONTEND_URL.rstrip("/")
+extra_origins = [o.strip().rstrip("/") for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 allowed_origins = list({frontend_url, "http://localhost:3000", "http://127.0.0.1:3000", *extra_origins})
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    # OPTIONS is required for browser CORS preflight requests.  Without it,
+    # authenticated POSTs such as registration are rejected before routing.
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Sentinel-Key-ID", "X-Sentinel-Signature", "X-Sentinel-Timestamp", "Sentry-Hook-Signature"],
 )
 

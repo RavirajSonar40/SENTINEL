@@ -52,3 +52,26 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+def decode_token_payload(token: str) -> Optional[dict]:
+    """Safely decode JWT payload without raising HTTP exceptions."""
+    try:
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except (JWTError, ValueError):
+        return None
+
+
+def get_user_from_token(token: str, db: Session) -> Optional[User]:
+    """Resolve User instance from raw JWT string."""
+    payload = decode_token_payload(token)
+    if not payload:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    try:
+        user_uuid = UUID(user_id)
+        return db.query(User).filter(User.id == user_uuid).first()
+    except Exception:
+        return None

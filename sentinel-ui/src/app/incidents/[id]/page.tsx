@@ -10,13 +10,41 @@ import {
   getIncident, updateIncident, deleteIncident, getInvestigation, listEvidence, listHypotheses,
   Incident, Investigation, Evidence, Hypothesis,
   listRepositories, Repository,
-  triggerInvestigation, getEngineStatus,
   triggerInvestigationStream, InvestigationStep,
   getRootCause, listFixes, RootCause, ProposedFix,
   generateDraftPR,
   getInvestigationTimeline, TimelineEvent,
   getRepoCommits, getRepoPRs, getRepoBranches,
 } from "@/lib/api";
+import { graphApi, IncidentBlastRadiusReport } from "@/lib/graphApi";
+import {
+  changeApi,
+  ChangeCorrelationReport,
+  IncidentChangeCorrelation,
+  CorrelationStatus,
+} from "@/lib/changeApi";
+import {
+  getIncidentEvidence,
+  submitManualEvidence,
+  verifyEvidence,
+  submitEvidenceCorrection,
+  getIncidentHypotheses,
+  evaluateHypotheses,
+  triageHypothesis,
+  getIncidentRootCause,
+  overrideRootCause,
+  EvidenceItem,
+  EvidenceListResponse,
+  HypothesisItem,
+  RootCauseReport,
+} from "@/lib/evidenceApi";
+import ExplainableTimeline from "@/components/ExplainableTimeline";
+import PostMortemStudio from "@/components/PostMortemStudio";
+import { PatchStudio } from "@/components/PatchStudio";
+import { MultiRepoRemediationStudio } from "@/components/MultiRepoRemediationStudio";
+import { patchApi, ProposedFixDetail } from "@/lib/patchApi";
+import { reliabilityApi, IncidentBusinessImpactItem } from "@/lib/reliabilityApi";
+
 
 const severityStyles: Record<string, string> = {
   "SEV-1": "bg-error/10 text-error border-error/20",
@@ -99,6 +127,131 @@ export default function InvestigationDetail() {
   const [editSeverity, setEditSeverity] = useState("");
   const [editDescription, setEditDescription] = useState("");
 
+  const [blastRadius, setBlastRadius] = useState<IncidentBlastRadiusReport | null>(null);
+  const [blastLoading, setBlastLoading] = useState(false);
+  const [recalculatingBlast, setRecalculatingBlast] = useState(false);
+
+  const [changeReport, setChangeReport] = useState<ChangeCorrelationReport | null>(null);
+  const [changeLoading, setChangeLoading] = useState(false);
+  const [correlatingChanges, setCorrelatingChanges] = useState(false);
+  const [triagingId, setTriagingId] = useState<string | null>(null);
+
+  // Phase 9 States
+  const [phase9Evidence, setPhase9Evidence] = useState<EvidenceItem[]>([]);
+  const [phase9Families, setPhase9Families] = useState<string[]>([]);
+  const [phase9Hypotheses, setPhase9Hypotheses] = useState<HypothesisItem[]>([]);
+  const [phase9RootCause, setPhase9RootCause] = useState<RootCauseReport | null>(null);
+  const [evidenceCategoryFilter, setEvidenceCategoryFilter] = useState<string>("all");
+  const [evidenceFamilyFilter, setEvidenceFamilyFilter] = useState<string>("all");
+  const [evaluatingHypotheses, setEvaluatingHypotheses] = useState(false);
+
+  // Tab Navigation State
+  const [mainTab, setMainTab] = useState<"investigation" | "timeline" | "postmortem" | "patch_studio" | "multi_repo">("investigation");
+  const [patchDetail, setPatchDetail] = useState<ProposedFixDetail | null>(null);
+
+  const [patchLoading, setPatchLoading] = useState(false);
+  const [generatingPatch, setGeneratingPatch] = useState(false);
+  const [patchError, setPatchError] = useState<string | null>(null);
+
+  // Phase 16 Business Impact State
+  const [businessImpact, setBusinessImpact] = useState<IncidentBusinessImpactItem | null>(null);
+  const [impactLoading, setImpactLoading] = useState(false);
+
+
+  // Phase 9 Modals
+  const [manualModalOpen, setManualModalOpen] = useState(false);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualCategory, setManualCategory] = useState<string>("fact");
+  const [manualContent, setManualContent] = useState("");
+  const [manualService, setManualService] = useState("");
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+
+  const [correctionModalEvidence, setCorrectionModalEvidence] = useState<EvidenceItem | null>(null);
+  const [correctionTitle, setCorrectionTitle] = useState("");
+  const [correctionContent, setCorrectionContent] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [correctionSubmitting, setCorrectionSubmitting] = useState(false);
+
+  const [triageModalHypothesis, setTriageModalHypothesis] = useState<HypothesisItem | null>(null);
+  const [triageStatus, setTriageStatus] = useState<string>("supported");
+  const [triageNotes, setTriageNotes] = useState("");
+  const [triageSubmitting, setTriageSubmitting] = useState(false);
+
+  const [overrideModalOpen, setOverrideModalOpen] = useState(false);
+  const [overrideSummary, setOverrideSummary] = useState("");
+  const [overrideExplanation, setOverrideExplanation] = useState("");
+  const [overrideNotes, setOverrideNotes] = useState("");
+  const [overrideSubmitting, setOverrideSubmitting] = useState(false);
+
+  const loadBlastRadius = async () => {
+    if (!params.id) return;
+    setBlastLoading(true);
+    try {
+      const report = await graphApi.getIncidentBlastRadius(params.id as string);
+      setBlastRadius(report);
+    } catch (e) {
+      console.error("Blast radius load error:", e);
+    } finally {
+      setBlastLoading(false);
+    }
+  };
+
+  const handleRecalculateBlastRadius = async () => {
+    if (!params.id) return;
+    setRecalculatingBlast(true);
+    try {
+      const report = await graphApi.recalculateIncidentBlastRadius(params.id as string);
+      setBlastRadius(report);
+    } catch (e) {
+      console.error("Recalculate blast radius error:", e);
+    } finally {
+      setRecalculatingBlast(false);
+    }
+  };
+
+  const loadChangeCorrelations = async () => {
+    if (!params.id) return;
+    setChangeLoading(true);
+    try {
+      const rep = await changeApi.getIncidentChanges(params.id as string, 120);
+      setChangeReport(rep);
+    } catch (e) {
+      console.error("Change correlations load error:", e);
+    } finally {
+      setChangeLoading(false);
+    }
+  };
+
+  const handleForceCorrelateChanges = async () => {
+    if (!params.id) return;
+    setCorrelatingChanges(true);
+    try {
+      const rep = await changeApi.correlateIncidentChanges(params.id as string, 120);
+      setChangeReport(rep);
+    } catch (e) {
+      console.error("Force correlate error:", e);
+    } finally {
+      setCorrelatingChanges(false);
+    }
+  };
+
+  const handleTriageCorrelation = async (correlationId: string, triage_status: CorrelationStatus) => {
+    if (!params.id) return;
+    const reason = window.prompt(`Enter operator triage rationale for '${triage_status}':`) || undefined;
+    setTriagingId(correlationId);
+    try {
+      await changeApi.triageCorrelation(params.id as string, correlationId, {
+        triage_status,
+        reason,
+      });
+      await loadChangeCorrelations();
+    } catch (e) {
+      console.error("Triage correlation error:", e);
+    } finally {
+      setTriagingId(null);
+    }
+  };
+
   const handleFetchGithub = async (type: "commits" | "prs" | "branches") => {
     if (!token || !repos.length) return;
     setGithubLoading(type);
@@ -119,6 +272,180 @@ export default function InvestigationDetail() {
       console.error("GitHub fetch error:", e);
     } finally {
       setGithubLoading(null);
+    }
+  };
+
+  const loadPhase9Data = async () => {
+    if (!params.id) return;
+    const id = params.id as string;
+    try {
+      const [evRes, hypRes, rcRes] = await Promise.allSettled([
+        getIncidentEvidence(id),
+        getIncidentHypotheses(id),
+        getIncidentRootCause(id),
+      ]);
+      if (evRes.status === "fulfilled") {
+        setPhase9Evidence(evRes.value.items || []);
+        setPhase9Families(evRes.value.distinct_families || []);
+      }
+      if (hypRes.status === "fulfilled") {
+        setPhase9Hypotheses(hypRes.value || []);
+      }
+      if (rcRes.status === "fulfilled") {
+        setPhase9RootCause(rcRes.value || null);
+      }
+    } catch (e) {
+      console.error("Phase 9 data load error:", e);
+    }
+  };
+
+  const loadPatchDetail = async () => {
+    if (!params.id) return;
+    setPatchLoading(true);
+    try {
+      const fixList = await listFixes(token || "", params.id as string);
+      if (fixList && fixList.length > 0) {
+        const detail = await patchApi.getPatchDetail(fixList[0].id);
+        setPatchDetail(detail);
+      } else {
+        setPatchDetail(null);
+      }
+    } catch (e) {
+      console.error("Failed to load patch detail:", e);
+    } finally {
+      setPatchLoading(false);
+    }
+  };
+
+  const loadBusinessImpact = async () => {
+    if (!params.id) return;
+    setImpactLoading(true);
+    try {
+      const imp = await reliabilityApi.getIncidentBusinessImpact(params.id as string);
+      setBusinessImpact(imp);
+    } catch (e) {
+      console.error("Failed to load business impact:", e);
+    } finally {
+      setImpactLoading(false);
+    }
+  };
+
+  const handleGeneratePatch = async () => {
+
+    if (!incident) return;
+    setGeneratingPatch(true);
+    setPatchError(null);
+    try {
+      const detail = await patchApi.generatePatch({
+        incident_id: incident.id,
+        instructions: incident.description || incident.title,
+      });
+      setPatchDetail(detail);
+      setMainTab("patch_studio");
+    } catch (err: any) {
+      setPatchError(err.message || "Failed to generate remediation patch");
+    } finally {
+      setGeneratingPatch(false);
+    }
+  };
+
+  const handleManualEvidenceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!params.id || !manualTitle) return;
+    setManualSubmitting(true);
+    try {
+      await submitManualEvidence(params.id as string, {
+        title: manualTitle,
+        category_type: manualCategory,
+        content: manualContent,
+        service: manualService || (incident?.service ?? undefined),
+      });
+      setManualTitle("");
+      setManualContent("");
+      setManualModalOpen(false);
+      await loadPhase9Data();
+    } catch (err) {
+      console.error("Submit manual evidence error:", err);
+    } finally {
+      setManualSubmitting(false);
+    }
+  };
+
+  const handleVerifyEvidence = async (evId: string, status: "verified" | "rejected") => {
+    if (!params.id) return;
+    try {
+      await verifyEvidence(params.id as string, evId, status);
+      await loadPhase9Data();
+    } catch (err) {
+      console.error("Verify evidence error:", err);
+    }
+  };
+
+  const handleCorrectionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!params.id || !correctionModalEvidence || !correctionTitle || !correctionReason) return;
+    setCorrectionSubmitting(true);
+    try {
+      await submitEvidenceCorrection(params.id as string, {
+        supersedes_evidence_id: correctionModalEvidence.id,
+        title: correctionTitle,
+        content: correctionContent,
+        correction_reason: correctionReason,
+      });
+      setCorrectionModalEvidence(null);
+      await loadPhase9Data();
+    } catch (err) {
+      console.error("Submit correction error:", err);
+    } finally {
+      setCorrectionSubmitting(false);
+    }
+  };
+
+  const handleRunHypothesisCompetition = async () => {
+    if (!params.id) return;
+    setEvaluatingHypotheses(true);
+    try {
+      await evaluateHypotheses(params.id as string);
+      await loadPhase9Data();
+    } catch (err) {
+      console.error("Evaluate hypotheses error:", err);
+    } finally {
+      setEvaluatingHypotheses(false);
+    }
+  };
+
+  const handleTriageHypothesisSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!params.id || !triageModalHypothesis || !triageNotes) return;
+    setTriageSubmitting(true);
+    try {
+      await triageHypothesis(params.id as string, triageModalHypothesis.id, triageStatus, triageNotes);
+      setTriageModalHypothesis(null);
+      await loadPhase9Data();
+    } catch (err) {
+      console.error("Triage hypothesis error:", err);
+    } finally {
+      setTriageSubmitting(false);
+    }
+  };
+
+  const handleOverrideRootCauseSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!params.id || !overrideSummary || !overrideExplanation || !overrideNotes) return;
+    setOverrideSubmitting(true);
+    try {
+      await overrideRootCause(params.id as string, {
+        summary: overrideSummary,
+        affected_component: incident?.service ?? undefined,
+        causal_explanation: overrideExplanation,
+        override_notes: overrideNotes,
+      });
+      setOverrideModalOpen(false);
+      await loadPhase9Data();
+    } catch (err) {
+      console.error("Override root cause error:", err);
+    } finally {
+      setOverrideSubmitting(false);
     }
   };
 
@@ -213,10 +540,15 @@ export default function InvestigationDetail() {
         }
         // Load repositories for GitHub evidence
         listRepositories(token).then(setRepos).catch(() => {});
+        loadBlastRadius();
+        loadChangeCorrelations();
+        loadPhase9Data();
+        loadBusinessImpact();
       })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [token, params.id]);
+
 
   const handleSaveIncident = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -388,10 +720,533 @@ export default function InvestigationDetail() {
                 </div>
               )}
             </div>
+
+            {/* Phase 16: Executive Financial & User Impact Card */}
+            <div className="bg-surface-container-low border border-outline-variant/60 rounded-xl p-4 space-y-3 shadow-sm">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[16px] text-emerald-400">payments</span>
+                  Business Impact
+                </h3>
+                {businessImpact && (
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${businessImpact.sla_breach_detected ? "bg-red-500/20 text-red-400 border border-red-500/30" : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"}`}>
+                    {businessImpact.sla_breach_detected ? "SLA BREACH" : "SLA COMPLIANT"}
+                  </span>
+                )}
+              </div>
+
+              {impactLoading ? (
+                <div className="text-[11px] text-on-surface-variant font-mono py-2 text-center">
+                  Calculating impact...
+                </div>
+              ) : businessImpact ? (
+                <div className="space-y-2 text-[11px] font-mono">
+                  <div className="p-2.5 rounded bg-surface-container border border-outline-variant/40 space-y-1">
+                    <div className="text-[10px] text-on-surface-variant">Estimated Financial Loss</div>
+                    <div className="text-[15px] font-bold text-emerald-400">
+                      {businessImpact.financial_loss_display}
+                    </div>
+                    {businessImpact.is_estimated_default && (
+                      <div className="text-[9px] text-on-surface-variant">(Org Baseline Estimate)</div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-between text-on-surface-variant">
+                    <span>Duration:</span>
+                    <span className="text-on-surface font-semibold">{businessImpact.outage_duration_minutes} mins</span>
+                  </div>
+
+                  <div className="flex justify-between text-on-surface-variant">
+                    <span>Affected Users:</span>
+                    <span className="text-on-surface font-semibold">{businessImpact.affected_user_count.toLocaleString()}</span>
+                  </div>
+
+                  <div className="flex justify-between text-on-surface-variant">
+                    <span>Degradation:</span>
+                    <span className="text-on-surface font-semibold">{(businessImpact.degradation_factor * 100).toFixed(0)}%</span>
+                  </div>
+
+                  {businessImpact.hourly_revenue_rate_usd && (
+                    <div className="flex justify-between text-on-surface-variant pt-1 border-t border-outline-variant/30">
+                      <span>Rate Base:</span>
+                      <span className="text-on-surface">${businessImpact.hourly_revenue_rate_usd.toLocaleString()}/hr</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-[11px] text-on-surface-variant font-mono py-2 text-center">
+                  No revenue baseline configured.
+                </div>
+              )}
+            </div>
           </div>
 
+
           {/* Right Column - Investigation Details */}
-          <div className="flex-1 flex flex-col gap-1 min-w-0">
+          <div className="flex-1 flex flex-col gap-4 min-w-0">
+            {/* Phase 10 Navigation Bar */}
+            <div className="flex items-center gap-1.5 bg-surface-container-low border border-outline-variant p-1.5 rounded-xl shadow-sm overflow-x-auto">
+              <button
+                onClick={() => setMainTab("investigation")}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                  mainTab === "investigation"
+                    ? "bg-primary text-on-primary shadow-sm"
+                    : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">troubleshoot</span>
+                Live Investigation &amp; Analysis
+              </button>
+              <button
+                onClick={() => setMainTab("timeline")}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                  mainTab === "timeline"
+                    ? "bg-primary text-on-primary shadow-sm"
+                    : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">timeline</span>
+                Explainable Timeline
+              </button>
+              <button
+                onClick={() => setMainTab("postmortem")}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                  mainTab === "postmortem"
+                    ? "bg-primary text-on-primary shadow-sm"
+                    : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">description</span>
+                Post-Mortem Studio
+              </button>
+              <button
+                onClick={() => {
+                  setMainTab("patch_studio");
+                  loadPatchDetail();
+                }}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                  mainTab === "patch_studio"
+                    ? "bg-primary text-on-primary shadow-sm"
+                    : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">code</span>
+                Patch Studio &amp; Test Suite
+              </button>
+              <button
+                onClick={() => setMainTab("multi_repo")}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                  mainTab === "multi_repo"
+                    ? "bg-primary text-on-primary shadow-sm"
+                    : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">account_tree</span>
+                Multi-Repo Remediation
+              </button>
+            </div>
+
+            {/* Multi-Repo Remediation View */}
+            {mainTab === "multi_repo" && token && (
+              <MultiRepoRemediationStudio
+                incidentId={incident.id}
+                token={token}
+                onRefreshParent={() => {
+                  if (token && params.id) {
+                    getIncident(token, params.id as string).then(setIncident).catch(() => {});
+                  }
+                }}
+              />
+            )}
+
+
+            {/* Patch Studio View */}
+            {mainTab === "patch_studio" && (
+              <div className="space-y-4">
+                {patchLoading ? (
+                  <div className="bg-surface-container-low border border-outline-variant rounded-xl p-8 text-center text-xs text-on-surface-variant font-mono">
+                    Loading Patch Studio...
+                  </div>
+                ) : patchDetail ? (
+                  <PatchStudio fix={patchDetail} onRefresh={loadPatchDetail} />
+                ) : (
+                  <div className="bg-surface-container-low border border-outline-variant rounded-xl p-8 text-center space-y-4 shadow-sm">
+                    <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary">
+                      <span className="material-symbols-outlined text-2xl">auto_fix_high</span>
+                    </div>
+                    <div className="max-w-md mx-auto space-y-1">
+                      <h3 className="font-bold text-on-surface text-base">No Remediation Patch Generated Yet</h3>
+                      <p className="text-xs text-on-surface-variant">
+                        Sentinel can autonomously synthesize a minimal git patch, pre-flight safety checklist, and two-phase regression test suite based on the verified root cause.
+                      </p>
+                    </div>
+                    {patchError && (
+                      <div className="max-w-md mx-auto p-3 rounded-lg bg-rose-950/40 border border-rose-800 text-xs text-rose-300">
+                        {patchError}
+                      </div>
+                    )}
+                    <button
+                      onClick={handleGeneratePatch}
+                      disabled={generatingPatch}
+                      className="px-5 py-2.5 bg-primary text-on-primary text-xs font-semibold rounded-lg shadow-lg hover:opacity-90 transition disabled:opacity-50 inline-flex items-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">play_arrow</span>
+                      {generatingPatch ? "Synthesizing Patch & Regression Tests..." : "Generate Safe Remediation Patch"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Timeline View */}
+            {mainTab === "timeline" && (
+              <ExplainableTimeline incidentId={incident.id} />
+            )}
+
+            {/* Post-Mortem View */}
+            {mainTab === "postmortem" && (
+              <PostMortemStudio incidentId={incident.id} />
+            )}
+
+
+            {/* Live Investigation View */}
+            {mainTab === "investigation" && (
+              <>
+            {/* Phase 6 Blast Radius & Impact Card */}
+            <div className="bg-surface-container-low border border-outline-variant rounded-xl p-5 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-outline-variant/60 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-rose-400 text-[22px]">radar</span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-bold text-on-surface">Service Graph Blast Radius</h2>
+                      {blastRadius && (
+                        <span className="px-2 py-0.2 rounded text-[10px] font-mono bg-surface-container-highest text-on-surface-variant">
+                          v{blastRadius.version} &bull; {blastRadius.engine_version}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-on-surface-variant">
+                      Multi-hop dependency traversal, live telemetry correlation &amp; repository action classification.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleRecalculateBlastRadius}
+                    disabled={recalculatingBlast || blastLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-container-highest text-[11px] font-medium border border-outline-variant transition-colors disabled:opacity-50"
+                  >
+                    <span className={`material-symbols-outlined text-[14px] ${recalculatingBlast ? "animate-spin" : ""}`}>
+                      refresh
+                    </span>
+                    {recalculatingBlast ? "Recalculating..." : "Recalculate"}
+                  </button>
+                  <Link
+                    href="/topology"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-[11px] font-medium transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">schema</span>
+                    View Graph
+                  </Link>
+                </div>
+              </div>
+
+              {blastLoading ? (
+                <div className="p-4 text-center text-xs text-on-surface-variant">
+                  <span className="material-symbols-outlined animate-spin text-[20px] mb-1">progress_activity</span>
+                  <div>Evaluating system dependency graph...</div>
+                </div>
+              ) : blastRadius ? (
+                <div className="space-y-4">
+                  {/* Customer Impact Summary Banner */}
+                  <div className="bg-gradient-to-r from-rose-950/30 via-surface-container-lowest to-surface-container-lowest p-4 rounded-xl border border-rose-500/20">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                            blastRadius.customer_impact.traffic_impact_mode === "measured"
+                              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                              : "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                          }`}>
+                            {blastRadius.customer_impact.traffic_impact_mode.toUpperCase()} IMPACT
+                          </span>
+                          <span className="text-[11px] text-on-surface-variant">
+                            Confidence: <strong className="text-on-surface">{blastRadius.customer_impact.traffic_confidence?.toUpperCase()}</strong>
+                          </span>
+                        </div>
+                        <div className="text-xs text-on-surface-variant mt-1">
+                          {blastRadius.customer_impact.calculation_basis || "Calculated using graph topology heuristics."}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 bg-surface-container-low px-4 py-2 rounded-lg border border-outline-variant">
+                        <div className="text-center">
+                          <div className="text-[10px] uppercase text-on-surface-variant font-semibold">Traffic Risk</div>
+                          <div className="text-xl font-black text-rose-400">
+                            {blastRadius.customer_impact.traffic_percent || 0}%
+                          </div>
+                        </div>
+                        <div className="h-6 w-px bg-outline-variant" />
+                        <div className="text-center">
+                          <div className="text-[10px] uppercase text-on-surface-variant font-semibold">Users Risk</div>
+                          <div className="text-xl font-black text-amber-400">
+                            {blastRadius.customer_impact.user_percent || 0}%
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Impacted Entities Columns */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                    {/* Indirect Downstream Services */}
+                    <div className="p-3 bg-surface-container-lowest rounded-lg border border-outline-variant space-y-2">
+                      <div className="font-semibold text-[11px] text-on-surface-variant uppercase tracking-wider flex items-center justify-between">
+                        <span>Downstream Callers ({blastRadius.indirect_services.length})</span>
+                      </div>
+                      {blastRadius.indirect_services.length === 0 ? (
+                        <div className="text-on-surface-variant/60 italic py-1">No downstream callers impacted.</div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                          {blastRadius.indirect_services.map((svc, idx) => (
+                            <div key={idx} className="flex items-center justify-between p-2 rounded bg-surface-container-low border border-outline-variant/60">
+                              <div>
+                                <div className="font-medium text-on-surface flex items-center gap-1.5">
+                                  <span>{svc.name}</span>
+                                  <span className={`px-1 py-0.2 rounded text-[9px] font-bold ${svc.impact_type === "observed" ? "bg-rose-500/20 text-rose-300" : "bg-sky-500/20 text-sky-300"}`}>
+                                    {svc.impact_type.toUpperCase()}
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-on-surface-variant">
+                                  Hop {svc.distance} &bull; {svc.impact_level}
+                                </div>
+                              </div>
+                              <span className={`text-[10px] font-mono font-bold ${svc.criticality === "hard" ? "text-rose-400" : "text-amber-400"}`}>
+                                {svc.criticality.toUpperCase()}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Affected Repositories with Remediation Target vs Evidence Only */}
+                    <div className="p-3 bg-surface-container-lowest rounded-lg border border-outline-variant space-y-2">
+                      <div className="font-semibold text-[11px] text-on-surface-variant uppercase tracking-wider">
+                        Repository Scopes ({blastRadius.affected_repositories.length})
+                      </div>
+                      {blastRadius.affected_repositories.length === 0 ? (
+                        <div className="text-on-surface-variant/60 italic py-1">No linked repositories.</div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                          {blastRadius.affected_repositories.map((repo, idx) => (
+                            <div key={idx} className="flex items-center justify-between p-2 rounded bg-surface-container-low border border-outline-variant/60">
+                              <div className="truncate mr-2">
+                                <div className="font-medium text-on-surface truncate">{repo.name}</div>
+                                <div className="text-[10px] text-on-surface-variant">{repo.role}</div>
+                              </div>
+                              <div>
+                                {repo.remediation_target ? (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 whitespace-nowrap">
+                                    Remediation Target
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-surface-container-highest text-on-surface-variant border border-outline-variant whitespace-nowrap">
+                                    Evidence Only
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-surface-container-lowest rounded-lg border border-outline-variant text-xs text-on-surface-variant flex items-center justify-between">
+                  <span>Blast radius analysis is not yet generated for this incident.</span>
+                  <button
+                    onClick={handleRecalculateBlastRadius}
+                    className="px-3 py-1 bg-primary text-on-primary rounded text-xs font-medium"
+                  >
+                    Calculate Now
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Phase 7 Change Intelligence & Temporal Correlation Card */}
+            <div className="bg-surface-container-low border border-outline-variant/80 rounded-xl p-4 space-y-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-20">history_toggle_off</span>
+                  <h3 className="font-bold text-14 text-on-surface">Change Intelligence & Temporal Correlation</h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-primary/20 text-primary border border-primary/30">
+                    P7 {changeReport ? `v${changeReport.version}` : ""}
+                  </span>
+                  {changeReport && changeReport.snapshot_hash && (
+                    <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] font-mono text-on-surface-variant bg-surface-container-high border border-outline-variant" title={`Snapshot SHA-256: ${changeReport.snapshot_hash}`}>
+                      {changeReport.snapshot_hash.slice(0, 8)}
+                    </span>
+                  )}
+                  {changeReport && changeReport.causal_candidates_count > 0 && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                      {changeReport.causal_candidates_count} Causal Candidate{changeReport.causal_candidates_count > 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleForceCorrelateChanges}
+                    disabled={correlatingChanges || changeLoading}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded bg-surface-container-high hover:bg-surface-container-highest border border-outline-variant text-on-surface transition disabled:opacity-50"
+                  >
+                    <span className={`material-symbols-outlined text-14 ${correlatingChanges ? "animate-spin" : ""}`}>
+                      autorenew
+                    </span>
+                    {correlatingChanges ? "Correlating..." : "Correlate Changes"}
+                  </button>
+                </div>
+              </div>
+
+              {changeLoading && !changeReport ? (
+                <div className="p-6 flex flex-col items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-24 animate-spin text-primary">progress_activity</span>
+                  <p className="text-xs text-on-surface-variant">Scanning recent multi-source changes...</p>
+                </div>
+              ) : changeReport && changeReport.correlations.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="p-2.5 bg-surface-container-lowest rounded-lg border border-outline-variant/60 flex items-center justify-between text-xs text-on-surface-variant">
+                    <span>{changeReport.summary}</span>
+                    <span className="font-mono text-[11px] text-on-surface-variant/80">Window: {changeReport.lookback_window_minutes}m</span>
+                  </div>
+
+                  <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                    {changeReport.correlations.map((corr) => {
+                      const deltaMin = Math.round(corr.time_delta_seconds / 60);
+                      const isBefore = corr.time_delta_seconds <= 0;
+                      const timingStr = isBefore ? `${Math.abs(deltaMin)}m before onset` : `${deltaMin}m after onset`;
+
+                      return (
+                        <div
+                          key={corr.id}
+                          className={`p-3 rounded-lg border transition space-y-2 ${
+                            corr.is_causal_candidate
+                              ? "bg-amber-500/5 border-amber-500/30 hover:border-amber-500/50"
+                              : "bg-surface-container-lowest border-outline-variant/60 hover:border-outline-variant"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-13 text-on-surface truncate">
+                                  {corr.change_event?.title || `Change Event #${corr.rank}`}
+                                </span>
+                                {corr.is_causal_candidate && (
+                                  <span className="px-2 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                    Causal Candidate
+                                  </span>
+                                )}
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-medium bg-surface-container-high text-on-surface-variant border border-outline-variant">
+                                  {corr.change_event?.change_type.replace(/_/g, " ") || "CHANGE"}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-on-surface-variant font-mono mt-0.5">
+                                {corr.change_event?.provider} &bull; {timingStr} &bull; {corr.topological_distance === 0 ? "Root Service" : `${corr.topological_distance} hop(s) away`}
+                              </div>
+                            </div>
+
+                            {/* Correlation Score Tag */}
+                            <div className="text-right whitespace-nowrap">
+                              <div className="text-12 font-bold font-mono text-primary">
+                                {(corr.correlation_score * 100).toFixed(1)}%
+                              </div>
+                              <span className="text-[10px] text-on-surface-variant">Rank #{corr.rank}</span>
+                            </div>
+                          </div>
+
+                          {/* Reasoning string */}
+                          {corr.reasoning && (
+                            <p className="text-[11px] text-on-surface-variant/90 bg-surface-container-high/40 p-2 rounded border border-outline-variant/40">
+                              {corr.reasoning}
+                            </p>
+                          )}
+
+                          {/* Human Operator Triage Row */}
+                          <div className="flex items-center justify-between pt-1 border-t border-outline-variant/40 text-[11px]">
+                            <div className="flex items-center gap-1.5 text-on-surface-variant">
+                              <span>Triage:</span>
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                  corr.triage_status === "SUSPECTED_ROOT_CAUSE"
+                                    ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                                    : corr.triage_status === "CONTRIBUTING_FACTOR"
+                                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                                    : corr.triage_status === "DISMISSED"
+                                    ? "bg-neutral-500/20 text-neutral-400 border border-neutral-500/40"
+                                    : "bg-surface-container text-on-surface-variant border border-outline-variant"
+                                }`}
+                              >
+                                {corr.triage_status.replace(/_/g, " ")}
+                              </span>
+                              {corr.triage_reason && (
+                                <span className="italic text-[10px] text-on-surface-variant truncate max-w-xs">
+                                  — "{corr.triage_reason}"
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Triage Action Buttons */}
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleTriageCorrelation(corr.id, "SUSPECTED_ROOT_CAUSE")}
+                                disabled={triagingId === corr.id}
+                                title="Mark as Suspected Root Cause"
+                                className="px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-medium transition"
+                              >
+                                Root Cause
+                              </button>
+                              <button
+                                onClick={() => handleTriageCorrelation(corr.id, "CONTRIBUTING_FACTOR")}
+                                disabled={triagingId === corr.id}
+                                title="Mark as Contributing Factor"
+                                className="px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-medium transition"
+                              >
+                                Factor
+                              </button>
+                              <button
+                                onClick={() => handleTriageCorrelation(corr.id, "DISMISSED")}
+                                disabled={triagingId === corr.id}
+                                title="Dismiss Correlation"
+                                className="px-2 py-0.5 rounded bg-surface-container-high hover:bg-surface-container-highest text-on-surface-variant border border-outline-variant text-[10px] font-medium transition"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-surface-container-lowest rounded-lg border border-outline-variant text-xs text-on-surface-variant flex items-center justify-between">
+                  <span>No recent changes correlated within the incident window.</span>
+                  <button
+                    onClick={handleForceCorrelateChanges}
+                    disabled={correlatingChanges}
+                    className="px-3 py-1 bg-primary text-on-primary rounded text-xs font-medium"
+                  >
+                    Scan Changes
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Run AI Investigation Button */}
             {(!investigation || ["created", "planning", "investigating", "failed"].includes(investigation.status)) && (
               <div className="bg-primary/5 border border-primary/20 rounded p-4">
@@ -604,221 +1459,361 @@ export default function InvestigationDetail() {
                 )}
               </div>
             )}
-            {hypotheses.length > 0 && (
-              <div className="bg-surface-container-low border border-surface-container-highest rounded p-4">
-                <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant mb-3">
-                  Hypotheses ({hypotheses.length})
-                </h2>
-                <div className="space-y-2">
-                  {hypotheses.map((hyp) => (
-                    <div
-                      key={hyp.id}
-                      className={`p-3 rounded border ${
-                        hyp.status === "supported"
-                          ? "border-primary/30 bg-primary/5"
-                          : hyp.status === "rejected"
-                          ? "border-outline-variant bg-surface-container"
-                          : "border-outline-variant"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[12px] font-medium text-on-surface">
-                          {hyp.label} — {hyp.description}
+            {/* Phase 9 Root Cause & Safe Abstention Card */}
+            <div className="bg-surface-container-low border border-outline-variant/80 rounded-xl p-4 space-y-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-[18px]">psychology_alt</span>
+                  <h2 className="text-[12px] font-semibold text-on-surface">
+                    Root Cause Analysis & Safe Abstention (Phase 9)
+                  </h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleRunHypothesisCompetition}
+                    disabled={evaluatingHypotheses}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-container-highest text-[11px] font-medium border border-outline-variant transition-colors disabled:opacity-50"
+                  >
+                    <span className={`material-symbols-outlined text-[14px] ${evaluatingHypotheses ? "animate-spin" : ""}`}>
+                      cycle
+                    </span>
+                    {evaluatingHypotheses ? "Evaluating..." : "Run Competition"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setOverrideSummary(phase9RootCause?.summary || "");
+                      setOverrideExplanation(phase9RootCause?.causal_explanation || "");
+                      setOverrideModalOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-[11px] font-medium border border-primary/30 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">tune</span>
+                    Human Override
+                  </button>
+                </div>
+              </div>
+
+              {phase9RootCause ? (
+                phase9RootCause.abstained ? (
+                  <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/30 via-surface-container-lowest to-surface-container-lowest border border-amber-500/30 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-amber-400 text-[20px]">shield_with_heart</span>
+                      <span className="text-[13px] font-bold text-amber-300">
+                        Root Cause Inconclusive — Safe Abstention Triggered
+                      </span>
+                      <span className="ml-auto px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        v{phase9RootCause.evaluation_version} &bull; {phase9RootCause.snapshot_hash || "hash"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-on-surface-variant leading-relaxed">
+                      {phase9RootCause.abstention_reason || "Evidence was insufficient across orthogonal families to declare a single deterministic root cause without risking hallucination."}
+                    </p>
+                    {phase9RootCause.missing_evidence_json && phase9RootCause.missing_evidence_json.length > 0 && (
+                      <div className="bg-surface-container-low p-3 rounded-lg border border-outline-variant space-y-1.5">
+                        <div className="text-[11px] font-semibold text-on-surface uppercase tracking-wider flex items-center gap-1">
+                          <span className="material-symbols-outlined text-amber-400 text-[14px]">checklist</span>
+                          Missing Evidence Required to Disambiguate:
+                        </div>
+                        <ul className="list-disc list-inside text-xs text-on-surface-variant space-y-1 pl-1">
+                          {phase9RootCause.missing_evidence_json.map((m, idx) => (
+                            <li key={idx}><span className="text-on-surface font-medium">{m}</span></li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/30 via-surface-container-lowest to-surface-container-lowest border border-emerald-500/30 space-y-3">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-emerald-400 text-[20px]">verified</span>
+                          <span className="text-[13px] font-bold text-emerald-300">
+                            Accepted Root Cause
+                          </span>
+                          {phase9RootCause.human_overridden && (
+                            <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                              OPERATOR OVERRIDDEN
+                            </span>
+                          )}
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            CONFIDENCE: {phase9RootCause.confidence.toUpperCase()}
+                          </span>
+                        </div>
+                        <h3 className="text-sm font-semibold text-on-surface mt-1.5">{phase9RootCause.summary}</h3>
+                      </div>
+                      <div className="text-[10px] font-mono text-on-surface-variant bg-surface-container-low px-3 py-1.5 rounded border border-outline-variant shrink-0">
+                        v{phase9RootCause.evaluation_version} &bull; {phase9RootCause.distinct_families_count} families &bull; {phase9RootCause.snapshot_hash || "hash"}
+                      </div>
+                    </div>
+                    <div className="text-xs text-on-surface-variant bg-surface-container-low p-3 rounded-lg border border-outline-variant">
+                      <span className="font-semibold text-on-surface">Causal Explanation: </span>
+                      {phase9RootCause.causal_explanation}
+                    </div>
+                    {phase9RootCause.disproof_summary && (
+                      <div className="text-[11px] text-on-surface-variant font-mono flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[13px] text-emerald-400">check_circle</span>
+                        <span>Adversarial Disproof: {phase9RootCause.disproof_summary}</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              ) : (
+                <div className="p-3 bg-surface-container-lowest rounded-lg border border-outline-variant text-xs text-on-surface-variant flex items-center justify-between">
+                  <span>No automated root-cause competition run yet.</span>
+                  <button
+                    onClick={handleRunHypothesisCompetition}
+                    disabled={evaluatingHypotheses}
+                    className="px-3 py-1 bg-primary text-on-primary rounded text-xs font-medium"
+                  >
+                    Evaluate Hypotheses
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Phase 9 Competing Hypotheses Matrix */}
+            <div className="bg-surface-container-low border border-surface-container-highest rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-[18px]">balance</span>
+                  <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                    Competing Hypotheses Matrix ({phase9Hypotheses.length || hypotheses.length})
+                  </h2>
+                </div>
+                <button
+                  onClick={handleRunHypothesisCompetition}
+                  disabled={evaluatingHypotheses}
+                  className="text-xs text-primary hover:underline font-medium"
+                >
+                  Re-evaluate Matrix
+                </button>
+              </div>
+
+              <div className="space-y-2.5">
+                {(phase9Hypotheses.length > 0 ? phase9Hypotheses : hypotheses).map((hyp: any) => (
+                  <div
+                    key={hyp.id}
+                    className={`p-3.5 rounded-xl border transition-all ${
+                      hyp.status === "accepted"
+                        ? "border-emerald-500/40 bg-emerald-950/20 shadow-sm"
+                        : hyp.status === "supported"
+                        ? "border-primary/30 bg-primary/5"
+                        : hyp.status === "disproven" || hyp.status === "contradicted" || hyp.status === "rejected"
+                        ? "border-outline-variant bg-surface-container/50 opacity-80"
+                        : "border-outline-variant bg-surface-container"
+                    }`}
+                  >
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-surface-container-high text-on-surface border border-outline-variant">
+                          {hyp.label}
                         </span>
-                        <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded ${
-                          hyp.status === "supported"
-                            ? "bg-primary/10 text-primary"
-                            : hyp.status === "rejected"
-                            ? "bg-surface-container-high text-on-surface-variant"
-                            : "bg-tertiary/10 text-tertiary"
+                        <span className="text-xs font-semibold text-on-surface">{hyp.description}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
+                          hyp.status === "accepted"
+                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                            : hyp.status === "supported"
+                            ? "bg-sky-500/20 text-sky-300 border border-sky-500/40"
+                            : hyp.status === "disproven"
+                            ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                            : "bg-surface-container-high text-on-surface-variant border border-outline-variant"
                         }`}>
                           {hyp.status}
                         </span>
-                      </div>
-                      <div className="flex gap-3 font-mono text-[11px] text-on-surface-variant mt-1">
-                        <span>Confidence: {hyp.confidence}</span>
-                        <span>Support: {hyp.supporting_evidence_count}</span>
-                        <span>Contradict: {hyp.contradicting_evidence_count}</span>
-                        {hyp.rejection_reason && (
-                          <span className="text-error">Reason: {hyp.rejection_reason}</span>
+                        {hyp.human_triaged && (
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                            TRIAGED
+                          </span>
                         )}
+                        <button
+                          onClick={() => {
+                            setTriageModalHypothesis(hyp);
+                            setTriageStatus(hyp.status || "supported");
+                            setTriageNotes(hyp.human_triage_notes || "");
+                          }}
+                          className="px-2 py-0.5 text-[10px] font-medium rounded bg-surface-container hover:bg-surface-container-highest border border-outline-variant text-on-surface"
+                        >
+                          Triage
+                        </button>
                       </div>
                     </div>
+
+                    {/* Tri-Factor Fit Badges */}
+                    <div className="flex flex-wrap gap-2 text-[10px] font-mono pt-1">
+                      <span className={`px-2 py-0.5 rounded border ${
+                        hyp.temporal_fit ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" : "bg-rose-500/10 text-rose-300 border-rose-500/30"
+                      }`}>
+                        Temporal Fit: {hyp.temporal_fit_score != null ? (hyp.temporal_fit_score * 100).toFixed(0) : "100"}%
+                      </span>
+                      <span className={`px-2 py-0.5 rounded border ${
+                        hyp.code_path_fit ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" : "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                      }`}>
+                        Code-Path Fit: {hyp.code_path_fit_score != null ? (hyp.code_path_fit_score * 100).toFixed(0) : "100"}%
+                      </span>
+                      <span className={`px-2 py-0.5 rounded border ${
+                        hyp.operational_fit ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" : "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                      }`}>
+                        Operational Fit: {hyp.operational_fit_score != null ? (hyp.operational_fit_score * 100).toFixed(0) : "100"}%
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-surface-container-high border border-outline-variant text-on-surface-variant">
+                        Evidence Families: {hyp.distinct_families_count || 1}
+                      </span>
+                    </div>
+
+                    {hyp.disproof_attempt_notes && (
+                      <div className="text-[11px] text-rose-300/90 font-mono mt-2 bg-rose-950/20 p-2 rounded border border-rose-500/20">
+                        {hyp.disproof_attempt_notes}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Phase 9 Multi-Family Immutable Evidence Ledger */}
+            <div className="bg-surface-container-low border border-surface-container-highest rounded-xl p-4 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-[18px]">fact_check</span>
+                  <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                    Evidence Ledger & Audit Trail ({phase9Evidence.length || evidence.length})
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setManualModalOpen(true)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-on-primary text-[11px] font-medium hover:bg-primary/90 transition-colors shadow-sm self-start sm:self-auto"
+                >
+                  <span className="material-symbols-outlined text-[14px]">add_circle</span>
+                  Add Manual Evidence
+                </button>
+              </div>
+
+              {/* Filter Chips */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <div className="flex items-center gap-1 bg-surface-container p-1 rounded-lg border border-outline-variant">
+                  {["all", "fact", "inference", "conclusion"].map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setEvidenceCategoryFilter(cat)}
+                      className={`px-2.5 py-1 rounded text-[10px] font-medium uppercase tracking-wider transition-colors ${
+                        evidenceCategoryFilter === cat
+                          ? "bg-primary text-on-primary shadow-sm"
+                          : "text-on-surface-variant hover:text-on-surface"
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1 bg-surface-container p-1 rounded-lg border border-outline-variant">
+                  {["all", "runtime_telemetry", "code_change", "topology_graph", "workspace_static", "verified_human"].map((fam) => (
+                    <button
+                      key={fam}
+                      onClick={() => setEvidenceFamilyFilter(fam)}
+                      className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                        evidenceFamilyFilter === fam
+                          ? "bg-secondary text-on-secondary shadow-sm"
+                          : "text-on-surface-variant hover:text-on-surface"
+                      }`}
+                    >
+                      {fam.replace("_", " ")}
+                    </button>
                   ))}
                 </div>
               </div>
-            )}
 
-            {/* Evidence */}
-            {evidence.length > 0 && (
-              <div className="bg-surface-container-low border border-surface-container-highest rounded p-4">
-                <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant mb-3">
-                  Evidence ({evidence.length})
-                </h2>
-                <div className="space-y-2">
-                  {evidence.map((ev) => (
+              {/* Evidence Items List */}
+              <div className="space-y-2.5">
+                {(phase9Evidence.length > 0 ? phase9Evidence : (evidence as unknown as EvidenceItem[]))
+                  .filter((ev) => evidenceCategoryFilter === "all" || ev.category_type === evidenceCategoryFilter)
+                  .filter((ev) => evidenceFamilyFilter === "all" || ev.evidence_family === evidenceFamilyFilter)
+                  .map((ev) => (
                     <div
                       key={ev.id}
-                      className="p-3 rounded border border-outline-variant bg-surface-container"
+                      className="p-3 rounded-xl border border-outline-variant bg-surface-container hover:bg-surface-container-high transition-colors space-y-2"
                     >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="material-symbols-outlined text-[14px] text-primary">
-                          {evidenceSourceIcons[ev.source_type] || "help"}
-                        </span>
-                        <span className="text-[12px] font-medium text-on-surface">
-                          {ev.title}
-                        </span>
-                        <span className="text-[11px] font-mono text-on-surface-variant ml-auto">
-                          {ev.source_type}
-                        </span>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[16px] text-primary">
+                            {evidenceSourceIcons[ev.source_type] || "description"}
+                          </span>
+                          <span className="text-xs font-semibold text-on-surface">{ev.title}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-primary/10 text-primary border border-primary/20 uppercase">
+                            {ev.category_type}
+                          </span>
+                          {ev.evidence_family && (
+                            <span className="px-2 py-0.5 rounded text-[9px] font-mono bg-surface-container-highest text-on-surface-variant border border-outline-variant">
+                              {ev.evidence_family}
+                            </span>
+                          )}
+                          {ev.is_redacted && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                              REDACTED
+                            </span>
+                          )}
+                          {ev.version && ev.version > 1 && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                              v{ev.version}
+                            </span>
+                          )}
+                          <span className="text-[10px] font-mono text-on-surface-variant">
+                            hash:{ev.content_hash?.slice(0, 8) || "canonical"}
+                          </span>
+                        </div>
                       </div>
-                      {ev.summary && (
-                        <p className="text-[11px] text-on-surface-variant ml-6">
-                          {ev.summary}
-                        </p>
+
+                      {ev.content && (
+                        <pre className="text-[11px] font-mono text-on-surface-variant bg-surface-container-lowest p-2.5 rounded-lg border border-outline-variant/60 max-h-36 overflow-y-auto whitespace-pre-wrap">
+                          {ev.content}
+                        </pre>
                       )}
-                      <div className="flex gap-3 font-mono text-[11px] text-on-surface-variant ml-6 mt-1">
-                        {ev.repository && <span>{ev.repository}</span>}
-                        {ev.file_path && <span>{ev.file_path}</span>}
-                        {ev.source_id && <span>{ev.source_id.slice(0, 7)}</span>}
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-on-surface-variant font-mono pt-1">
+                        <div className="flex gap-3">
+                          {ev.service && <span>Service: {ev.service}</span>}
+                          {ev.commit_sha && <span>Commit: {ev.commit_sha.slice(0, 7)}</span>}
+                          {ev.file_path && <span>Path: {ev.file_path}</span>}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {ev.source_type === "manual" && ev.verification_status !== "verified" && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleVerifyEvidence(ev.id, "verified")}
+                                className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30"
+                              >
+                                Verify
+                              </button>
+                              <button
+                                onClick={() => handleVerifyEvidence(ev.id, "rejected")}
+                                className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => {
+                              setCorrectionModalEvidence(ev);
+                              setCorrectionTitle(ev.title);
+                              setCorrectionContent(ev.content || "");
+                            }}
+                            className="px-2 py-0.5 rounded bg-surface-container-high hover:bg-surface-container-highest border border-outline-variant text-on-surface"
+                          >
+                            Correct (Append-Only)
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
-                </div>
               </div>
-            )}
-
-            {/* GitHub Evidence */}
-            {repos.length > 0 && (
-              <div className="bg-surface-container-low border border-surface-container-highest rounded p-4">
-                <h2 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant mb-3">
-                  GitHub Evidence
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="bg-surface-container border border-outline-variant rounded p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="material-symbols-outlined text-[16px] text-primary">commit</span>
-                      <span className="text-[12px] font-medium text-on-surface">Recent Commits</span>
-                    </div>
-                    <p className="text-[12px] text-on-surface-variant">
-                      Fetch commits from connected repositories to find suspicious changes.
-                    </p>
-                    <button
-                      onClick={() => handleFetchGithub("commits")}
-                      disabled={githubLoading === "commits"}
-                      className="mt-2 text-[11px] text-primary hover:underline disabled:opacity-50"
-                    >
-                      {githubLoading === "commits" ? "Fetching..." : githubData.commits.length > 0 ? `View ${githubData.commits.length} Commits` : "Fetch Commits"}
-                    </button>
-                    {githubData.commits.length > 0 && (
-                      <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
-                        {githubData.commits.slice(0, 5).map((c: {sha?: string; commit?: {message?: string}}, i: number) => (
-                          <div key={i} className="text-[10px] font-mono text-on-surface-variant truncate">
-                            {c.sha?.slice(0, 7)} {c.commit?.message?.slice(0, 40)}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="bg-surface-container border border-outline-variant rounded p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="material-symbols-outlined text-[16px] text-tertiary">merge</span>
-                      <span className="text-[12px] font-medium text-on-surface">Pull Requests</span>
-                    </div>
-                    <p className="text-[12px] text-on-surface-variant">
-                      Review recent PRs and their diffs for potential root causes.
-                    </p>
-                    <button
-                      onClick={() => handleFetchGithub("prs")}
-                      disabled={githubLoading === "prs"}
-                      className="mt-2 text-[11px] text-primary hover:underline disabled:opacity-50"
-                    >
-                      {githubLoading === "prs" ? "Fetching..." : githubData.prs.length > 0 ? `View ${githubData.prs.length} PRs` : "View PRs"}
-                    </button>
-                    {githubData.prs.length > 0 && (
-                      <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
-                        {githubData.prs.slice(0, 5).map((p: {number?: number; title?: string}, i: number) => (
-                          <div key={i} className="text-[10px] font-mono text-on-surface-variant truncate">
-                            #{p.number} {p.title?.slice(0, 40)}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="bg-surface-container border border-outline-variant rounded p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="material-symbols-outlined text-[16px] text-secondary">hub</span>
-                      <span className="text-[12px] font-medium text-on-surface">Branches</span>
-                    </div>
-                    <p className="text-[12px] text-on-surface-variant">
-                      Compare branches and deployment tags for regression analysis.
-                    </p>
-                    <button
-                      onClick={() => handleFetchGithub("branches")}
-                      disabled={githubLoading === "branches"}
-                      className="mt-2 text-[11px] text-primary hover:underline disabled:opacity-50"
-                    >
-                      {githubLoading === "branches" ? "Fetching..." : githubData.branches.length > 0 ? `View ${githubData.branches.length} Branches` : "Compare"}
-                    </button>
-                    {githubData.branches.length > 0 && (
-                      <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
-                        {githubData.branches.slice(0, 5).map((b: {name?: string}, i: number) => (
-                          <div key={i} className="text-[10px] font-mono text-on-surface-variant truncate">
-                            {b.name}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="mt-3 p-3 bg-surface-container-high border border-outline-variant rounded">
-                  <p className="text-[11px] text-on-surface-variant">
-                    Connect GitHub in <Link href="/integrations" className="text-primary hover:underline">Integrations</Link> to enable automatic commit/PR fetching and webhook-based real-time sync.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Root Cause */}
-            {rootCause && (
-              <div className="bg-primary/5 border border-primary/20 rounded p-4">
-                <h2 className="text-[11px] font-semibold uppercase tracking-wider text-primary mb-3">
-                  Root Cause Identified
-                </h2>
-                <div className="space-y-3">
-                  <div>
-                    <div className="text-[13px] font-medium text-on-surface mb-1">{rootCause.summary}</div>
-                    <div className="text-[11px] text-on-surface-variant">{rootCause.causal_explanation}</div>
-                  </div>
-                  <div className="flex gap-3 font-mono text-[11px]">
-                    <span className={`px-2 py-0.5 rounded border ${
-                      rootCause.confidence === "high"
-                        ? "bg-primary/10 text-primary border-primary/20"
-                        : rootCause.confidence === "medium"
-                        ? "bg-tertiary/10 text-tertiary border-tertiary/20"
-                        : "bg-surface-container-high text-on-surface-variant border-outline-variant"
-                    }`}>
-                      Confidence: {rootCause.confidence}
-                    </span>
-                    {rootCause.affected_component && (
-                      <span className="text-on-surface-variant">Component: {rootCause.affected_component}</span>
-                    )}
-                  </div>
-                  {rootCause.relevant_files && rootCause.relevant_files.length > 0 && (
-                    <div className="mt-2">
-                      <div className="text-[10px] text-on-surface-variant mb-1">Affected Files:</div>
-                      <div className="flex flex-wrap gap-1">
-                        {rootCause.relevant_files.map((f, i) => (
-                          <span key={i} className="px-2 py-0.5 bg-surface-container rounded text-[10px] font-mono text-on-surface-variant">
-                            {f}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            </div>
 
             {/* Proposed Fixes */}
             {fixes.length > 0 && (
@@ -1009,8 +2004,320 @@ export default function InvestigationDetail() {
                 )}
               </div>
             )}
+            </>
+            )}
           </div>
         </div>
+
+        {/* Phase 9 Manual Evidence Submission Modal */}
+        {manualModalOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-surface-container-low border border-outline-variant rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-[20px]">add_circle</span>
+                  <h3 className="text-sm font-bold text-on-surface">Submit Manual Evidence</h3>
+                </div>
+                <button
+                  onClick={() => setManualModalOpen(false)}
+                  className="text-on-surface-variant hover:text-on-surface"
+                >
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+
+              <form onSubmit={handleManualEvidenceSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">Title *</label>
+                  <input
+                    type="text"
+                    required
+                    value={manualTitle}
+                    onChange={(e) => setManualTitle(e.target.value)}
+                    placeholder="e.g. SRE observed thread dump pool exhaustion"
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-on-surface-variant mb-1">Category Type</label>
+                    <select
+                      value={manualCategory}
+                      onChange={(e) => setManualCategory(e.target.value)}
+                      className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary"
+                    >
+                      <option value="fact">Fact (Observed truth)</option>
+                      <option value="inference">Inference (Derived belief)</option>
+                      <option value="conclusion">Conclusion (Synthesized claim)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-on-surface-variant mb-1">Component / Service</label>
+                    <input
+                      type="text"
+                      value={manualService}
+                      onChange={(e) => setManualService(e.target.value)}
+                      placeholder={incident?.service || "payment-service"}
+                      className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">Content / Logs / Notes</label>
+                  <textarea
+                    rows={4}
+                    value={manualContent}
+                    onChange={(e) => setManualContent(e.target.value)}
+                    placeholder="Paste logs, stack traces, or operational observations here..."
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs font-mono text-on-surface focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setManualModalOpen(false)}
+                    className="px-4 py-2 rounded-lg bg-surface-container hover:bg-surface-container-highest text-xs text-on-surface font-medium border border-outline-variant"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={manualSubmitting}
+                    className="px-4 py-2 rounded-lg bg-primary text-on-primary text-xs font-bold hover:bg-primary/90 disabled:opacity-50 shadow-md"
+                  >
+                    {manualSubmitting ? "Submitting..." : "Submit Evidence"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Phase 9 Append-Only Evidence Correction Modal */}
+        {correctionModalEvidence && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-surface-container-low border border-outline-variant rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-purple-400 text-[20px]">edit_note</span>
+                  <h3 className="text-sm font-bold text-on-surface">Submit Append-Only Correction</h3>
+                </div>
+                <button
+                  onClick={() => setCorrectionModalEvidence(null)}
+                  className="text-on-surface-variant hover:text-on-surface"
+                >
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-surface-container-high/60 border border-outline-variant text-[11px] text-on-surface-variant">
+                Creating an immutable versioned record that supersedes <strong>{correctionModalEvidence.title}</strong> (v{correctionModalEvidence.version || 1}).
+              </div>
+
+              <form onSubmit={handleCorrectionSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">Corrected Title *</label>
+                  <input
+                    type="text"
+                    required
+                    value={correctionTitle}
+                    onChange={(e) => setCorrectionTitle(e.target.value)}
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">Correction Reason *</label>
+                  <input
+                    type="text"
+                    required
+                    value={correctionReason}
+                    onChange={(e) => setCorrectionReason(e.target.value)}
+                    placeholder="e.g. Revised after analyzing database pool flame graphs"
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">Corrected Content</label>
+                  <textarea
+                    rows={4}
+                    value={correctionContent}
+                    onChange={(e) => setCorrectionContent(e.target.value)}
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs font-mono text-on-surface focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setCorrectionModalEvidence(null)}
+                    className="px-4 py-2 rounded-lg bg-surface-container hover:bg-surface-container-highest text-xs text-on-surface font-medium border border-outline-variant"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={correctionSubmitting}
+                    className="px-4 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-500 disabled:opacity-50 shadow-md"
+                  >
+                    {correctionSubmitting ? "Saving..." : "Save Correction (v" + ((correctionModalEvidence.version || 1) + 1) + ")"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Phase 9 Hypothesis Triage Modal */}
+        {triageModalHypothesis && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-surface-container-low border border-outline-variant rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-purple-400 text-[20px]">gavel</span>
+                  <h3 className="text-sm font-bold text-on-surface">Operator Hypothesis Triage</h3>
+                </div>
+                <button
+                  onClick={() => setTriageModalHypothesis(null)}
+                  className="text-on-surface-variant hover:text-on-surface"
+                >
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+
+              <div className="p-3 rounded-lg bg-surface-container border border-outline-variant space-y-1">
+                <div className="font-mono text-xs font-bold text-primary">{triageModalHypothesis.label}</div>
+                <div className="text-xs text-on-surface">{triageModalHypothesis.description}</div>
+              </div>
+
+              <form onSubmit={handleTriageHypothesisSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">Triage Status *</label>
+                  <select
+                    value={triageStatus}
+                    onChange={(e) => setTriageStatus(e.target.value)}
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary"
+                  >
+                    <option value="supported">Supported (Consistent with facts)</option>
+                    <option value="accepted">Accepted (Declared definitive root-cause)</option>
+                    <option value="contradicted">Contradicted (Questioned by data)</option>
+                    <option value="disproven">Disproven (Falsified by facts)</option>
+                    <option value="rejected">Rejected (Discarded)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">Triage Notes / Operator Rationale *</label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={triageNotes}
+                    onChange={(e) => setTriageNotes(e.target.value)}
+                    placeholder="Document operator reasoning and supporting analysis..."
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setTriageModalHypothesis(null)}
+                    className="px-4 py-2 rounded-lg bg-surface-container hover:bg-surface-container-highest text-xs text-on-surface font-medium border border-outline-variant"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={triageSubmitting}
+                    className="px-4 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-500 disabled:opacity-50 shadow-md"
+                  >
+                    {triageSubmitting ? "Recording..." : "Apply Human Triage"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Phase 9 Root Cause Override Modal */}
+        {overrideModalOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-surface-container-low border border-outline-variant rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-[20px]">tune</span>
+                  <h3 className="text-sm font-bold text-on-surface">Human Root Cause Override</h3>
+                </div>
+                <button
+                  onClick={() => setOverrideModalOpen(false)}
+                  className="text-on-surface-variant hover:text-on-surface"
+                >
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+
+              <form onSubmit={handleOverrideRootCauseSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">Root Cause Summary *</label>
+                  <input
+                    type="text"
+                    required
+                    value={overrideSummary}
+                    onChange={(e) => setOverrideSummary(e.target.value)}
+                    placeholder="e.g. Memory leak in background metric scrubber"
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">Causal Explanation *</label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={overrideExplanation}
+                    onChange={(e) => setOverrideExplanation(e.target.value)}
+                    placeholder="Explain the causal mechanics of the failure..."
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-on-surface-variant mb-1">Operator Override Notes *</label>
+                  <input
+                    type="text"
+                    required
+                    value={overrideNotes}
+                    onChange={(e) => setOverrideNotes(e.target.value)}
+                    placeholder="e.g. Confirmed by DBA post-mortem analysis"
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setOverrideModalOpen(false)}
+                    className="px-4 py-2 rounded-lg bg-surface-container hover:bg-surface-container-highest text-xs text-on-surface font-medium border border-outline-variant"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={overrideSubmitting}
+                    className="px-4 py-2 rounded-lg bg-primary text-on-primary text-xs font-bold hover:bg-primary/90 disabled:opacity-50 shadow-md"
+                  >
+                    {overrideSubmitting ? "Saving..." : "Save Override"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </main>
     </>
   );

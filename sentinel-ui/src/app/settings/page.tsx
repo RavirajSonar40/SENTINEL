@@ -123,9 +123,10 @@ export default function SettingsPage() {
           <div className="flex justify-end">
             <button
               type="submit"
-              className="px-6 py-2 bg-primary text-on-primary rounded text-[12px] font-medium hover:bg-primary/90 transition-colors"
+              disabled={loading}
+              className="px-6 py-2 bg-primary text-on-primary rounded text-[12px] font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
-              {saved ? "Saved!" : "Save Settings"}
+              {loading ? "Loading..." : saved ? "Saved!" : "Save Settings"}
             </button>
           </div>
           </form>

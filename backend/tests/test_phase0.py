@@ -1,13 +1,71 @@
-"""Tests for Phase 0 security hardening: numbering, rate limits, masking, ownership."""
 import pytest
-from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from app.core.database import get_db, Base
+from app.models.incident import User, Organization, UserOrganizationMembership, MembershipRole
+from app.core.auth import hash_password
+import uuid
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+test_engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+
+@pytest.fixture(autouse=True)
+def setup_database():
+    Base.metadata.create_all(bind=test_engine)
+    session = TestingSessionLocal()
+    try:
+        org = Organization(name="Phase0 Org", slug=f"p0-org-{uuid.uuid4().hex[:6]}")
+        session.add(org)
+        session.flush()
+
+        user = User(
+            username="admin",
+            email="admin@sentinel.io",
+            hashed_password=hash_password("sentinel123"),
+            role="admin",
+            organization_id=org.id,
+            is_active=True,
+        )
+        session.add(user)
+        session.flush()
+
+        mem = UserOrganizationMembership(
+            user_id=user.id,
+            organization_id=org.id,
+            role=MembershipRole.ADMIN,
+        )
+        session.add(mem)
+        session.commit()
+    finally:
+        session.close()
+
+    yield
+    Base.metadata.drop_all(bind=test_engine)
 
 
 @pytest.fixture
 def client():
     from app.main import app
-    return TestClient(app)
+
+    def override_get_db():
+        session = TestingSessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
 
 
 def get_auth_header(client):
@@ -155,7 +213,7 @@ class TestRateLimits:
 
     def test_webhook_rate_limit_enforced(self, client):
         """Webhook endpoints enforce 60/minute limit."""
-        for _ in range(62):
-            client.post("/webhooks/generic", json={"text": "rate-limit-test"})
-        resp = client.post("/webhooks/generic", json={"text": "rate-limit-test"})
+        for i in range(62):
+            client.post("/webhooks/generic", json={"text": f"rate-limit-test-{i}"})
+        resp = client.post("/webhooks/generic", json={"text": "rate-limit-test-63"})
         assert resp.status_code == 429

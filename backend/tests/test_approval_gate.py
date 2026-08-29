@@ -13,7 +13,8 @@ async def test_generate_pr_rejects_unapproved_fix():
     investigation = MagicMock(id="inv-1", incident_id="inc-1")
     incident = MagicMock(id="inc-1", creator_id=None, scopes=[])
     db = MagicMock()
-    db.query.return_value.filter.return_value.first.side_effect = [fix, investigation, incident]
+    # 1: fix, 2: investigation, 3: incident, 4: approval (None)
+    db.query.return_value.filter.return_value.first.side_effect = [fix, investigation, incident, None]
 
     with pytest.raises(HTTPException) as error:
         await generate_draft_pr(
@@ -23,4 +24,4 @@ async def test_generate_pr_rejects_unapproved_fix():
         )
 
     assert error.value.status_code == 409
-    assert "approved" in error.value.detail
+    assert "approved" in error.value.detail

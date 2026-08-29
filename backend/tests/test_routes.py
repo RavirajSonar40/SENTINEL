@@ -1,18 +1,74 @@
-"""Tests for API routes — with proper auth handling."""
 import pytest
-from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from app.core.database import get_db, Base
+from app.models.incident import User, Organization, UserOrganizationMembership, MembershipRole
+from app.core.auth import hash_password
+import uuid
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+test_engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+
+@pytest.fixture(autouse=True)
+def setup_database():
+    Base.metadata.create_all(bind=test_engine)
+    session = TestingSessionLocal()
+    try:
+        org = Organization(name="Routes Org", slug=f"routes-org-{uuid.uuid4().hex[:6]}")
+        session.add(org)
+        session.flush()
+
+        user = User(
+            username="admin",
+            email="admin@sentinel.io",
+            hashed_password=hash_password("sentinel123"),
+            role="admin",
+            organization_id=org.id,
+            is_active=True,
+        )
+        session.add(user)
+        session.flush()
+
+        mem = UserOrganizationMembership(
+            user_id=user.id,
+            organization_id=org.id,
+            role=MembershipRole.ADMIN,
+        )
+        session.add(mem)
+        session.commit()
+    finally:
+        session.close()
+
+    yield
+    Base.metadata.drop_all(bind=test_engine)
 
 
 @pytest.fixture
 def client():
-    """Create test client."""
     from app.main import app
-    return TestClient(app)
+
+    def override_get_db():
+        session = TestingSessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
 
 
 def get_auth_header(client):
-    """Login and get auth header."""
     resp = client.post("/auth/login", json={"username": "admin", "password": "sentinel123"})
     if resp.status_code == 200:
         token = resp.json().get("access_token", "")

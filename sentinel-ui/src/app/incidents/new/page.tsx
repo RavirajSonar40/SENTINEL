@@ -237,6 +237,23 @@ export default function NewIncident() {
                     </div>
                     <p className="text-[11px] text-on-surface-variant mt-1">Sentinel will identify the affected service automatically</p>
                   </div>
+                  <div>
+                    <label className="text-[12px] text-on-surface-variant mb-1 block">Incident Source</label>
+                    <div className="relative">
+                      <select
+                        value={source}
+                        onChange={(e) => setSource(e.target.value)}
+                        className="w-full px-3 py-2 font-mono text-[13px] text-on-surface bg-surface-container border border-outline-variant rounded-md appearance-none pr-8 focus:border-primary focus:outline-none"
+                      >
+                        {sources.map((s) => (
+                          <option key={s.value} value={s.value}>{s.label}</option>
+                        ))}
+                      </select>
+                      <span className="material-symbols-outlined absolute right-2 top-2.5 text-on-surface-variant pointer-events-none text-[16px]">
+                        expand_more
+                      </span>
+                    </div>
+                  </div>
                 </div>
                 <div>
                   <label className="text-[12px] text-on-surface-variant mb-1 block">Anything else we should know? (optional)</label>

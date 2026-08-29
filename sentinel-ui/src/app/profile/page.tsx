@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import { useAuth } from "@/lib/AuthContext";
-import { getMe, UserProfile, listIncidents, Incident } from "@/lib/api";
+import { getMe, UserProfile, listIncidents } from "@/lib/api";
 
 export default function ProfilePage() {
   const { token, userId, username, logout } = useAuth();

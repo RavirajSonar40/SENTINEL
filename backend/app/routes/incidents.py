@@ -78,6 +78,9 @@ class IncidentOut(BaseModel):
 
 def _get_next_incident_number(db: Session) -> int:
     from sqlalchemy import text
+    if db.bind and db.bind.dialect.name == "sqlite":
+        max_num = db.execute(text("SELECT COALESCE(MAX(number), 0) FROM incidents")).scalar()
+        return (max_num or 0) + 1
     try:
         result = db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
         return result
@@ -101,8 +104,17 @@ def create_incident(
         if not validation["safe"]:
             raise HTTPException(status_code=400, detail="Input contains potentially unsafe content. Please rephrase.")
 
+    service_record = None
+    if payload.service and current_user.organization_id:
+        service_record = db.query(Service).filter(
+            Service.name == payload.service,
+            Service.organization_id == current_user.organization_id,
+        ).first()
+
     incident = Incident(
         number=_get_next_incident_number(db),
+        organization_id=current_user.organization_id,
+        service_id=service_record.id if service_record else None,
         title=payload.title,
         description=payload.description,
         severity=payload.severity,
@@ -114,6 +126,7 @@ def create_incident(
     )
     db.add(incident)
     db.flush()
+
 
     # Attach repository scopes
     for repo_id_str in payload.repository_ids:

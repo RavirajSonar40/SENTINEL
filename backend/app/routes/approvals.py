@@ -1,225 +1,307 @@
-"""Human approval workflow — approve/reject proposed fixes and PRs.
-
-Includes tenant ownership checks, reviewer authorization, and validation status gates.
 """
-from typing import Dict, List, Optional
+Approval Lifecycle REST API Routes (Phase 13).
+Provides multi-tenant approval queries, compliance checklist inspection,
+and transactional quorum decision submissions.
+"""
+
+from typing import Dict, List, Optional, Any
+from uuid import UUID
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
 from pydantic import BaseModel
 import logging
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
+from app.core.permissions import get_active_membership, require_operator, require_viewer
 from app.models.incident import (
-    Incident, Investigation, ProposedFix, Approval, AuditEvent, ValidationRun,
-    User, ApprovalStatus, FixStatus, IncidentStatus,
+    Incident, Investigation, ProposedFix, Approval, ApprovalDecision,
+    AuditEvent, ValidationRun, User, ApprovalStatus, FixStatus,
+)
+from app.schemas.policy import (
+    ApprovalRequestOut, ApprovalDecisionRequest, ApprovalDecisionOut,
+    ComplianceChecklistOut,
+)
+from app.services.approval_service import (
+    create_approval_request, submit_approval_decision,
+    invalidate_stale_approvals_for_fix, compile_compliance_checklist,
 )
 
 logger = logging.getLogger("sentinel.approvals")
 
-router = APIRouter()
+router = APIRouter(prefix="/approvals", tags=["approvals"])
 
 
-class ApprovalRequest(BaseModel):
+class LegacyApprovalRequest(BaseModel):
     fix_id: str
     action: str  # approve, reject, request_changes
     comment: Optional[str] = None
 
 
-class ApprovalResponse(BaseModel):
+class LegacyApprovalResponse(BaseModel):
     status: str
     approval_id: str
     message: str
 
 
-# --- Approval Logic ---
-
-def process_approval(
-    fix_id: str,
-    action: str,
-    user: User,
-    comment: Optional[str],
-    db: Session,
-) -> Dict:
-    """Process an approval/rejection for a fix.
-
-    Verifies:
-    - Fix belongs to current tenant (admin bypasses)
-    - Reviewer is authorized (admin or incident creator)
-    """
-    fix = db.query(ProposedFix).filter(ProposedFix.id == fix_id).first()
-    if not fix:
-        raise HTTPException(status_code=404, detail="Fix not found")
-
-    # Tenant ownership check: non-admin users can only approve fixes for their own incidents
-    if user.role != "admin":
-        incident = db.query(Incident).filter(Incident.id == fix.incident_id).first()
-        if incident and incident.creator_id and str(incident.creator_id) != str(user.id):
-            raise HTTPException(status_code=403, detail="Not authorized to approve fixes for this incident")
-
-    # Reviewer authorization: must be admin or incident creator
-    if user.role != "admin":
-        incident = db.query(Incident).filter(Incident.id == fix.incident_id).first()
-        if incident and incident.creator_id and str(incident.creator_id) != str(user.id):
-            raise HTTPException(status_code=403, detail="Only admins or incident creators can approve fixes")
-
-    # Map action to status
-    status_map = {
-        "approve": ApprovalStatus.APPROVED,
-        "reject": ApprovalStatus.REJECTED,
-        "request_changes": ApprovalStatus.MODIFIED,
-    }
-    approval_status = status_map.get(action)
-    if not approval_status:
-        raise HTTPException(status_code=400, detail=f"Invalid action: {action}")
-
-    # Create approval record
-    approval = Approval(
-        fix_id=fix_id,
-        user_id=user.id,
-        incident_id=fix.incident_id,
-        status=approval_status,
-        notes=comment or "",
-    )
-    db.add(approval)
-
-    # Update fix status
-    if action == "approve":
-        fix.status = FixStatus.APPROVED.value
-    elif action == "reject":
-        fix.status = FixStatus.REJECTED.value
-    elif action == "request_changes":
-        fix.status = FixStatus.CHANGES_REQUESTED.value
-
-    # Audit event
-    audit = AuditEvent(
-        event_type=f"fix.{action}",
-        description=f"Fix {action}: {fix.title}",
-        user_id=user.id,
-        incident_id=fix.incident_id,
-        metadata_json={"comment": comment, "fix_id": fix_id},
-    )
-    db.add(audit)
-    db.commit()
-
-    return {
-        "fix_id": fix_id,
-        "action": action,
-        "approval_id": approval.id,
-        "fix_status": fix.status,
-    }
-
-
-def check_auto_merge_eligibility(fix: ProposedFix) -> bool:
-    """Check if a fix is eligible for auto-merge."""
-    if fix.fix_type not in ("dependency_update", "rollback"):
-        return False
-
-    # Check if approved
-    if fix.status != FixStatus.APPROVED.value:
-        return False
-
-    return True
-
-
-# --- API Endpoints ---
-
-@router.post("/approvals")
-async def submit_approval(
-    request: ApprovalRequest,
-    current_user: User = Depends(get_current_user),
+@router.get("", response_model=List[ApprovalRequestOut])
+def list_approvals(
+    status_filter: Optional[str] = None,
+    fix_id: Optional[UUID] = None,
+    incident_id: Optional[UUID] = None,
+    context=Depends(get_active_membership),
     db: Session = Depends(get_db),
 ):
-    """Submit an approval/rejection for a proposed fix."""
-    result = process_approval(
-        request.fix_id,
-        request.action,
-        current_user,
-        request.comment,
-        db,
-    )
-    return ApprovalResponse(
-        status="submitted",
-        approval_id=result["approval_id"],
-        message=f"Fix {request.action}d successfully",
-    )
+    """List approval requests for the active organization with optional filters."""
+    org, membership = context
+    query = db.query(Approval).filter(Approval.organization_id == org.id)
 
+    if status_filter:
+        stat_clean = status_filter.lower()
+        if stat_clean == "pending":
+            query = query.filter(Approval.status == ApprovalStatus.PENDING)
+        elif stat_clean == "approved":
+            query = query.filter(Approval.status == ApprovalStatus.APPROVED)
+        elif stat_clean == "rejected":
+            query = query.filter(Approval.status == ApprovalStatus.REJECTED)
+        elif stat_clean == "changes_requested":
+            query = query.filter(Approval.status == ApprovalStatus.CHANGES_REQUESTED)
+        elif stat_clean == "stale":
+            query = query.filter(Approval.status == ApprovalStatus.INVALIDATED_STALE)
 
-@router.get("/approvals/pending")
-async def list_pending_approvals(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """List all fixes awaiting approval."""
-    fixes = db.query(ProposedFix).filter(
-        ProposedFix.status == FixStatus.GENERATED.value,
-    ).all()
+    if fix_id:
+        query = query.filter(Approval.fix_id == fix_id)
 
+    if incident_id:
+        query = query.filter(Approval.incident_id == incident_id)
+
+    approvals = query.order_by(Approval.requested_at.desc()).all()
     results = []
-    for fix in fixes:
-        investigation = db.query(Investigation).filter(
-            Investigation.id == fix.investigation_id
-        ).first()
-        incident = None
-        if investigation:
-            incident = db.query(Incident).filter(
-                Incident.id == investigation.incident_id
-            ).first()
-
-        results.append({
-            "fix_id": fix.id,
-            "title": fix.title,
-            "description": fix.description,
-            "fix_type": fix.fix_type,
-            "investigation_id": fix.investigation_id,
-            "incident_number": incident.number if incident else None,
-            "incident_title": incident.title if incident else None,
-            "auto_merge_eligible": check_auto_merge_eligibility(fix),
-            "created_at": fix.generated_at.isoformat() if fix.generated_at else None,
-        })
-
+    for app in approvals:
+        results.append(_format_approval_out(app, db))
     return results
 
 
-@router.get("/approvals/{fix_id}/history")
-async def get_approval_history(
-    fix_id: str,
-    current_user: User = Depends(get_current_user),
+@router.get("/pending")
+def list_pending_approvals_legacy(
+    context=Depends(get_active_membership),
     db: Session = Depends(get_db),
 ):
-    """Get approval history for a fix."""
+    """Compatibility endpoint: list all pending approval requests."""
+    org, membership = context
     approvals = db.query(Approval).filter(
-        Approval.fix_id == fix_id
+        Approval.organization_id == org.id,
+        Approval.status == ApprovalStatus.PENDING,
     ).order_by(Approval.requested_at.desc()).all()
 
-    return [
-        {
-            "id": a.id,
-            "user_id": a.user_id,
-            "status": a.status,
-            "comment": a.notes,
-            "created_at": a.requested_at.isoformat() if a.requested_at else None,
-        }
-        for a in approvals
-    ]
+    results = []
+    for app in approvals:
+        fix = app.fix
+        results.append({
+            "approval_id": str(app.id),
+            "fix_id": str(app.fix_id) if app.fix_id else None,
+            "title": fix.title if fix else "Approval Request",
+            "description": fix.description if fix else "",
+            "risk_level": app.risk_level,
+            "required_approvals": app.required_approvals,
+            "approvals_received": app.approvals_received,
+            "patch_version": app.patch_version,
+            "status": app.status.value if hasattr(app.status, "value") else str(app.status),
+            "requested_at": app.requested_at.isoformat() if app.requested_at else None,
+        })
+    return results
 
 
-@router.post("/approvals/bulk")
-async def bulk_approval(
-    fix_ids: List[str],
-    action: str,
-    comment: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+@router.get("/{approval_id}", response_model=ApprovalRequestOut)
+def get_approval_detail(
+    approval_id: UUID,
+    context=Depends(get_active_membership),
     db: Session = Depends(get_db),
 ):
-    """Bulk approve/reject multiple fixes."""
-    results = []
-    for fix_id in fix_ids:
-        try:
-            result = process_approval(fix_id, action, current_user, comment, db)
-            results.append({"fix_id": fix_id, "status": "success", **result})
-        except HTTPException as e:
-            results.append({"fix_id": fix_id, "status": "error", "message": e.detail})
+    """Retrieve full details of an approval request including compliance checklist and decisions."""
+    org, membership = context
+    approval = db.query(Approval).filter(
+        Approval.id == approval_id,
+        Approval.organization_id == org.id,
+    ).first()
 
-    return {"results": results, "total": len(results)}
+    if not approval:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found.")
+
+    return _format_approval_out(approval, db)
+
+
+@router.post("/request/{fix_id}", response_model=ApprovalRequestOut, status_code=status.HTTP_201_CREATED)
+def request_approval_for_fix(
+    fix_id: UUID,
+    notes: Optional[str] = None,
+    context=Depends(require_operator),
+    db: Session = Depends(get_db),
+):
+    """Request human operator approval for a proposed fix."""
+    org, membership = context
+    current_user = membership.user if hasattr(membership, "user") and membership.user else None
+
+    fix = db.query(ProposedFix).filter(
+        ProposedFix.id == fix_id,
+        ProposedFix.organization_id == org.id,
+    ).first()
+
+    if not fix:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proposed fix not found.")
+
+    approval = create_approval_request(
+        db=db,
+        organization_id=org.id,
+        fix=fix,
+        actor=current_user,
+        action_type="create_draft_pr",
+        notes=notes,
+    )
+    return _format_approval_out(approval, db)
+
+
+@router.post("/{approval_id}/decision", response_model=ApprovalRequestOut)
+@router.post("/{approval_id}/decide", response_model=ApprovalRequestOut)
+def record_decision(
+    approval_id: UUID,
+    payload: ApprovalDecisionRequest,
+    context=Depends(require_operator),
+    db: Session = Depends(get_db),
+):
+    """
+    Submit an approval decision (approved, rejected, changes_requested)
+    with transactional row locking and quorum counting.
+    """
+    org, membership = context
+    current_user = membership.user if hasattr(membership, "user") and membership.user else None
+    if not current_user:
+        current_user = db.query(User).filter(User.id == membership.user_id).first()
+
+    approval, decision_rec = submit_approval_decision(
+        db=db,
+        approval_id=approval_id,
+        approver=current_user,
+        decision_type=payload.decision,
+        notes=payload.notes,
+    )
+    return _format_approval_out(approval, db)
+
+
+@router.post("", response_model=LegacyApprovalResponse)
+def submit_legacy_approval(
+    request: LegacyApprovalRequest,
+    context=Depends(require_operator),
+    db: Session = Depends(get_db),
+):
+    """Legacy approval endpoint: maps action to decision."""
+    org, membership = context
+    current_user = membership.user if hasattr(membership, "user") and membership.user else None
+    if not current_user:
+        current_user = db.query(User).filter(User.id == membership.user_id).first()
+
+    fix = db.query(ProposedFix).filter(ProposedFix.id == request.fix_id).first()
+    if not fix or fix.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Fix not found")
+
+    # Find active pending approval or create one
+    approval = db.query(Approval).filter(
+        Approval.fix_id == fix.id,
+        Approval.status == ApprovalStatus.PENDING,
+    ).first()
+    if not approval:
+        approval = create_approval_request(
+            db=db,
+            organization_id=org.id,
+            fix=fix,
+            actor=current_user,
+            action_type="create_draft_pr",
+            notes=request.comment,
+        )
+
+    action_map = {
+        "approve": "approved",
+        "reject": "rejected",
+        "request_changes": "changes_requested",
+    }
+    decision_clean = action_map.get(request.action.lower(), request.action.lower())
+
+    approval, _ = submit_approval_decision(
+        db=db,
+        approval_id=approval.id,
+        approver=current_user,
+        decision_type=decision_clean,
+        notes=request.comment,
+    )
+
+    return LegacyApprovalResponse(
+        status="submitted",
+        approval_id=str(approval.id),
+        message=f"Decision '{decision_clean}' recorded for fix",
+    )
+
+
+@router.get("/{fix_id}/history")
+def get_fix_approval_history(
+    fix_id: UUID,
+    context=Depends(get_active_membership),
+    db: Session = Depends(get_db),
+):
+    """Get all approval history and decisions for a fix."""
+    org, membership = context
+    approvals = db.query(Approval).filter(
+        Approval.fix_id == fix_id,
+        Approval.organization_id == org.id,
+    ).order_by(Approval.requested_at.desc()).all()
+
+    return [_format_approval_out(a, db) for a in approvals]
+
+
+def _format_approval_out(approval: Approval, db: Session) -> ApprovalRequestOut:
+    """Helper to convert Approval ORM to ApprovalRequestOut schema."""
+    decisions_out = []
+    if approval.decisions:
+        for d in approval.decisions:
+            approver = d.approver
+            decisions_out.append(ApprovalDecisionOut(
+                id=d.id,
+                approval_id=d.approval_id,
+                approver_id=d.approver_id,
+                approver_name=getattr(approver, "full_name", None) or getattr(approver, "username", "Operator"),
+                approver_email=getattr(approver, "email", None),
+                role=d.role,
+                decision=d.decision,
+                notes=d.notes,
+                created_at=d.created_at,
+            ))
+
+    checklist_obj = None
+    if approval.compliance_checklist_json:
+        checklist_obj = ComplianceChecklistOut(**approval.compliance_checklist_json)
+
+    stat_val = approval.status.value if hasattr(approval.status, "value") else str(approval.status)
+
+    return ApprovalRequestOut(
+        id=approval.id,
+        organization_id=approval.organization_id,
+        incident_id=approval.incident_id,
+        fix_id=approval.fix_id,
+        work_item_id=approval.work_item_id,
+        action_type=approval.action_type,
+        status=stat_val,
+        risk_level=approval.risk_level,
+        patch_version=approval.patch_version or 1,
+        snapshot_hash=approval.snapshot_hash,
+        base_commit_sha=approval.base_commit_sha,
+        validation_run_id=approval.validation_run_id,
+        required_approvals=approval.required_approvals or 1,
+        approvals_received=approval.approvals_received or 0,
+        compliance_checklist=checklist_obj,
+        decisions=decisions_out,
+        notes=approval.notes,
+        requested_at=approval.requested_at,
+        decided_at=approval.decided_at,
+        expires_at=approval.expires_at,
+    )

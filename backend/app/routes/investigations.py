@@ -1,510 +1,279 @@
-from fastapi import APIRouter, Depends, HTTPException
+"""
+REST API Endpoints for Phase 8 Investigation Workflows.
+
+Implements:
+- POST /investigations/{id}/stream-ticket
+- GET /investigations/{id}/stream (SSE with single-use ticket or Bearer auth)
+- POST /investigations/{id}/start
+- GET /investigations/{id}
+- GET /investigations/{id}/tasks
+- POST /investigations/{id}/pause
+- POST /investigations/{id}/cancel
+- POST /investigations/{id}/step
+"""
+
+import uuid
+import logging
+from typing import List, Optional, Tuple
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
-from typing import Optional, List
-from uuid import UUID
-from datetime import datetime
 
 from app.core.database import get_db
-from app.core.auth import get_current_user
+from app.core.auth import get_user_from_token
+from app.core.permissions import require_role
 from app.models.incident import (
-    Investigation, InvestigationTask, InvestigationStatus, TaskStatus,
-    Evidence, EvidenceSourceType,
-    Hypothesis, HypothesisEvidence, HypothesisStatus, Confidence,
-    RootCause,
-    ProposedFix, FixFile, ValidationRun, ValidationStatus,
-    AuditEvent, User, Incident,
+    Organization,
+    UserOrganizationMembership,
+    MembershipRole,
+    Investigation,
+    InvestigationTask,
+    InvestigationStatus,
+    User,
+)
+from app.schemas.investigations import (
+    InvestigationStartRequest,
+    InvestigationStepRequest,
+    StreamTicketResponse,
+    InvestigationDetailResponse,
+    InvestigationTaskResponse,
+)
+from app.services.investigation_workflow_service import (
+    generate_stream_ticket,
+    consume_stream_ticket,
+    subscribe_workflow_stream,
+    transition_investigation_status,
+    run_repository_task,
+    run_bug_investigation,
+    run_feature_implementation,
+    run_production_investigation,
+    run_security_investigation,
 )
 
+logger = logging.getLogger("sentinel.routes.investigations")
 
-def _check_investigation_access(inv: Investigation, user: User, db: Session):
-    """Raise 403 if user is not admin and doesn't own the investigation's incident."""
-    if user.role == "admin":
-        return
-    incident = db.query(Incident).filter(Incident.id == inv.incident_id).first()
-    if not incident or incident.creator_id != user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-router = APIRouter(prefix="/investigations", tags=["investigations"])
+router = APIRouter(prefix="/investigations", tags=["Phase 8 - Investigation Workflows"])
 
 
-# --- Schemas ---
+# ============================================================================
+# 1. STREAM TICKET & SSE STREAMING
+# ============================================================================
 
-class InvestigationOut(BaseModel):
-    id: str
-    incident_id: str
-    status: str
-    current_step: Optional[str]
-    progress_percent: int
-    root_cause_found: bool
-    confidence: Optional[str]
-    llm_model: Optional[str]
-    total_tokens: int
-    total_cost_usd: float
-    started_at: datetime
-    completed_at: Optional[datetime]
-
-class TaskOut(BaseModel):
-    id: str
-    task_type: str
-    description: Optional[str]
-    status: str
-    order: int
-    tool_name: Optional[str]
-    error_message: Optional[str]
-    attempt: int
-    started_at: Optional[datetime]
-    completed_at: Optional[datetime]
-
-class EvidenceCreate(BaseModel):
-    source_type: str
-    source_id: Optional[str] = None
-    repository: Optional[str] = None
-    file_path: Optional[str] = None
-    line_start: Optional[int] = None
-    line_end: Optional[int] = None
-    title: str
-    content: Optional[str] = None
-    summary: Optional[str] = None
-    timestamp: Optional[datetime] = None
-    source_url: Optional[str] = None
-    relevance_score: Optional[float] = None
-
-class EvidenceOut(BaseModel):
-    id: str
-    source_type: str
-    source_id: Optional[str]
-    repository: Optional[str]
-    file_path: Optional[str]
-    line_start: Optional[int]
-    line_end: Optional[int]
-    title: str
-    content: Optional[str]
-    summary: Optional[str]
-    timestamp: Optional[datetime]
-    source_url: Optional[str]
-    relevance_score: Optional[float]
-    collected_at: datetime
-
-class HypothesisCreate(BaseModel):
-    label: str
-    description: str
-
-class HypothesisOut(BaseModel):
-    id: str
-    label: str
-    description: str
-    status: str
-    confidence: str
-    supporting_evidence_count: int
-    contradicting_evidence_count: int
-    missing_evidence_count: int
-    evaluation_notes: Optional[str]
-    rejection_reason: Optional[str]
-    created_at: datetime
-    evaluated_at: Optional[datetime]
-
-class RootCauseOut(BaseModel):
-    id: str
-    summary: str
-    affected_component: Optional[str]
-    causal_explanation: str
-    confidence: str
-    relevant_commits: Optional[list]
-    relevant_files: Optional[list]
-    timeline: Optional[list]
-    identified_at: datetime
-
-class ProposedFixOut(BaseModel):
-    id: str
-    title: str
-    description: str
-    problem: Optional[str]
-    root_cause: Optional[str]
-    proposed_change: str
-    expected_behavior: Optional[str]
-    risk: Optional[str]
-    diff: Optional[str]
-    branch_name: Optional[str]
-    pr_number: Optional[int]
-    pr_url: Optional[str]
-    generated_at: datetime
-
-class FixFileOut(BaseModel):
-    id: str
-    file_path: str
-    change_type: str
-    additions: int
-    deletions: int
-
-class ValidationOut(BaseModel):
-    id: str
-    status: str
-    total_checks: int
-    passed_checks: int
-    failed_checks: int
-    lint_result: Optional[dict]
-    test_result: Optional[dict]
-    build_result: Optional[dict]
-    started_at: Optional[datetime]
-    completed_at: Optional[datetime]
-
-
-# --- Investigation Endpoints ---
-
-@router.get("/{investigation_id}", response_model=InvestigationOut)
-def get_investigation(
-    investigation_id: str,
+@router.post("/{investigation_id}/stream-ticket", response_model=StreamTicketResponse)
+def create_stream_ticket(
+    investigation_id: uuid.UUID,
+    auth_ctx: Tuple[Organization, UserOrganizationMembership] = Depends(require_role(MembershipRole.VIEWER)),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
-    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
-    if not inv:
-        raise HTTPException(status_code=404, detail="Investigation not found")
-    _check_investigation_access(inv, current_user, db)
-    return _inv_to_out(inv)
-
-
-@router.get("/{investigation_id}/tasks", response_model=List[TaskOut])
-def list_tasks(
-    investigation_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
-    if not inv:
-        raise HTTPException(status_code=404, detail="Investigation not found")
-    _check_investigation_access(inv, current_user, db)
-    tasks = db.query(InvestigationTask).filter(
-        InvestigationTask.investigation_id == UUID(investigation_id)
-    ).order_by(InvestigationTask.order).all()
-    return [_task_to_out(t) for t in tasks]
-
-
-# --- Evidence Endpoints ---
-
-@router.get("/{investigation_id}/evidence", response_model=List[EvidenceOut])
-def list_evidence(
-    investigation_id: str,
-    source_type: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
-    if not inv:
-        raise HTTPException(status_code=404, detail="Investigation not found")
-    _check_investigation_access(inv, current_user, db)
-    query = db.query(Evidence).filter(Evidence.investigation_id == UUID(investigation_id))
-    if source_type:
-        query = query.filter(Evidence.source_type == source_type)
-    evidence = query.order_by(Evidence.collected_at).all()
-    return [_evidence_to_out(e) for e in evidence]
-
-
-@router.post("/{investigation_id}/evidence", response_model=EvidenceOut)
-def add_evidence(
-    investigation_id: str,
-    payload: EvidenceCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    evidence = Evidence(
-        investigation_id=UUID(investigation_id),
-        source_type=payload.source_type,
-        source_id=payload.source_id,
-        repository=payload.repository,
-        file_path=payload.file_path,
-        line_start=payload.line_start,
-        line_end=payload.line_end,
-        title=payload.title,
-        content=payload.content,
-        summary=payload.summary,
-        timestamp=payload.timestamp,
-        source_url=payload.source_url,
-        relevance_score=payload.relevance_score,
-    )
-    db.add(evidence)
-    db.commit()
-    db.refresh(evidence)
-    return _evidence_to_out(evidence)
-
-
-# --- Hypothesis Endpoints ---
-
-@router.get("/{investigation_id}/hypotheses", response_model=List[HypothesisOut])
-def list_hypotheses(
-    investigation_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
-    if not inv:
-        raise HTTPException(status_code=404, detail="Investigation not found")
-    _check_investigation_access(inv, current_user, db)
-    hyps = db.query(Hypothesis).filter(
-        Hypothesis.investigation_id == UUID(investigation_id)
-    ).order_by(Hypothesis.label).all()
-    return [_hyp_to_out(h) for h in hyps]
-
-
-@router.post("/{investigation_id}/hypotheses", response_model=HypothesisOut)
-def create_hypothesis(
-    investigation_id: str,
-    payload: HypothesisCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    hyp = Hypothesis(
-        investigation_id=UUID(investigation_id),
-        label=payload.label,
-        description=payload.description,
-    )
-    db.add(hyp)
-    db.commit()
-    db.refresh(hyp)
-    return _hyp_to_out(hyp)
-
-
-# --- Root Cause Endpoints ---
-
-@router.get("/{investigation_id}/root-cause", response_model=RootCauseOut)
-def get_root_cause(
-    investigation_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
-    if not inv:
-        raise HTTPException(status_code=404, detail="Investigation not found")
-    _check_investigation_access(inv, current_user, db)
-    rc = db.query(RootCause).filter(
-        RootCause.investigation_id == UUID(investigation_id)
+    """Generate a single-use, 60s stream ticket for secure EventSource connections."""
+    org, membership = auth_ctx
+    inv = db.query(Investigation).filter(
+        Investigation.organization_id == org.id,
+        Investigation.id == investigation_id,
     ).first()
-    if not rc:
-        raise HTTPException(status_code=404, detail="Root cause not found")
-    return _rc_to_out(rc)
-
-
-# --- Fix Endpoints ---
-
-@router.get("/{investigation_id}/fixes", response_model=List[ProposedFixOut])
-def list_fixes(
-    investigation_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    inv = db.query(Investigation).filter(Investigation.id == UUID(investigation_id)).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
-    _check_investigation_access(inv, current_user, db)
-    fixes = db.query(ProposedFix).join(RootCause).filter(
-        RootCause.investigation_id == UUID(investigation_id)
-    ).all()
-    return [_fix_to_out(f) for f in fixes]
 
-
-@router.get("/fixes/{fix_id}", response_model=ProposedFixOut)
-def get_fix(
-    fix_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    fix = db.query(ProposedFix).filter(ProposedFix.id == UUID(fix_id)).first()
-    if not fix:
-        raise HTTPException(status_code=404, detail="Fix not found")
-    return _fix_to_out(fix)
-
-
-@router.get("/fixes/{fix_id}/files", response_model=List[FixFileOut])
-def list_fix_files(
-    fix_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    files = db.query(FixFile).filter(FixFile.fix_id == UUID(fix_id)).all()
-    return [_file_to_out(f) for f in files]
-
-
-@router.get("/fixes/{fix_id}/validations", response_model=List[ValidationOut])
-def list_validations(
-    fix_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    runs = db.query(ValidationRun).filter(
-        ValidationRun.fix_id == UUID(fix_id)
-    ).order_by(ValidationRun.created_at).all()
-    return [_val_to_out(v) for v in runs]
-
-
-# --- Helpers ---
-
-def _inv_to_out(inv: Investigation) -> InvestigationOut:
-    return InvestigationOut(
-        id=str(inv.id),
-        incident_id=str(inv.incident_id),
-        status=inv.status.value if hasattr(inv.status, 'value') else inv.status,
-        current_step=inv.current_step,
-        progress_percent=inv.progress_percent or 0,
-        root_cause_found=inv.root_cause_found or False,
-        confidence=inv.confidence.value if hasattr(inv.confidence, 'value') else inv.confidence,
-        llm_model=inv.llm_model,
-        total_tokens=inv.total_tokens or 0,
-        total_cost_usd=inv.total_cost_usd or 0.0,
-        started_at=inv.started_at,
-        completed_at=inv.completed_at,
-    )
-
-def _task_to_out(task: InvestigationTask) -> TaskOut:
-    return TaskOut(
-        id=str(task.id),
-        task_type=task.task_type,
-        description=task.description,
-        status=task.status.value if hasattr(task.status, 'value') else task.status,
-        order=task.order,
-        tool_name=task.tool_name,
-        error_message=task.error_message,
-        attempt=task.attempt,
-        started_at=task.started_at,
-        completed_at=task.completed_at,
-    )
-
-def _evidence_to_out(e: Evidence) -> EvidenceOut:
-    return EvidenceOut(
-        id=str(e.id),
-        source_type=e.source_type.value if hasattr(e.source_type, 'value') else e.source_type,
-        source_id=e.source_id,
-        repository=e.repository,
-        file_path=e.file_path,
-        line_start=e.line_start,
-        line_end=e.line_end,
-        title=e.title,
-        content=e.content,
-        summary=e.summary,
-        timestamp=e.timestamp,
-        source_url=e.source_url,
-        relevance_score=e.relevance_score,
-        collected_at=e.collected_at,
-    )
-
-def _hyp_to_out(h: Hypothesis) -> HypothesisOut:
-    return HypothesisOut(
-        id=str(h.id),
-        label=h.label,
-        description=h.description,
-        status=h.status.value if hasattr(h.status, 'value') else h.status,
-        confidence=h.confidence.value if hasattr(h.confidence, 'value') else h.confidence,
-        supporting_evidence_count=h.supporting_evidence_count or 0,
-        contradicting_evidence_count=h.contradicting_evidence_count or 0,
-        missing_evidence_count=h.missing_evidence_count or 0,
-        evaluation_notes=h.evaluation_notes,
-        rejection_reason=h.rejection_reason,
-        created_at=h.created_at,
-        evaluated_at=h.evaluated_at,
-    )
-
-def _rc_to_out(rc: RootCause) -> RootCauseOut:
-    return RootCauseOut(
-        id=str(rc.id),
-        summary=rc.summary,
-        affected_component=rc.affected_component,
-        causal_explanation=rc.causal_explanation,
-        confidence=rc.confidence.value if hasattr(rc.confidence, 'value') else rc.confidence,
-        relevant_commits=rc.relevant_commits,
-        relevant_files=rc.relevant_files,
-        timeline=rc.timeline,
-        identified_at=rc.identified_at,
-    )
-
-def _fix_to_out(f: ProposedFix) -> ProposedFixOut:
-    return ProposedFixOut(
-        id=str(f.id),
-        title=f.title,
-        description=f.description,
-        problem=f.problem,
-        root_cause=f.root_cause,
-        proposed_change=f.proposed_change,
-        expected_behavior=f.expected_behavior,
-        risk=f.risk,
-        diff=f.diff,
-        branch_name=f.branch_name,
-        pr_number=f.pr_number,
-        pr_url=f.pr_url,
-        generated_at=f.generated_at,
-    )
-
-def _file_to_out(f: FixFile) -> FixFileOut:
-    return FixFileOut(
-        id=str(f.id),
-        file_path=f.file_path,
-        change_type=f.change_type,
-        additions=f.additions,
-        deletions=f.deletions,
-    )
-
-def _val_to_out(v: ValidationRun) -> ValidationOut:
-    return ValidationOut(
-        id=str(v.id),
-        status=v.status.value if hasattr(v.status, 'value') else v.status,
-        total_checks=v.total_checks or 0,
-        passed_checks=v.passed_checks or 0,
-        failed_checks=v.failed_checks or 0,
-        lint_result=v.lint_result,
-        test_result=v.test_result,
-        build_result=v.build_result,
-        started_at=v.started_at,
-        completed_at=v.completed_at,
+    ticket = generate_stream_ticket(investigation_id, membership.user_id)
+    return StreamTicketResponse(
+        stream_ticket=ticket,
+        investigation_id=investigation_id,
+        expires_in_seconds=60,
     )
 
 
-# --- Timeline ---
-
-@router.get("/investigations/{investigation_id}/timeline")
-async def get_investigation_timeline(
-    investigation_id: str,
-    current_user=Depends(get_current_user),
+@router.get("/{investigation_id}/stream")
+async def stream_investigation_progress(
+    investigation_id: uuid.UUID,
+    ticket: Optional[str] = Query(None, description="Single-use secure stream ticket"),
+    authorization: Optional[str] = Header(None),
+    last_event_id: Optional[int] = Header(None, alias="Last-Event-ID"),
     db: Session = Depends(get_db),
 ):
-    """Get chronological timeline of investigation events."""
-    from app.services.timeline import build_timeline
-    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
-    if not investigation:
+    """
+    Server-Sent Events (SSE) stream for live workflow progress tracking.
+    Authenticates via Authorization header or single-use stream ticket.
+    """
+    # 1. Authenticate via single-use ticket OR Authorization Header
+    authenticated = False
+    if ticket:
+        if consume_stream_ticket(ticket, investigation_id):
+            authenticated = True
+        else:
+            raise HTTPException(status_code=401, detail="Invalid or expired stream ticket")
+    elif authorization and authorization.startswith("Bearer "):
+        token_str = authorization.replace("Bearer ", "").strip()
+        user = get_user_from_token(token_str, db)
+        if user:
+            # Check tenant isolation
+            inv = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+            if inv:
+                membership = db.query(UserOrganizationMembership).filter(
+                    UserOrganizationMembership.organization_id == inv.organization_id,
+                    UserOrganizationMembership.user_id == user.id,
+                ).first()
+                if membership:
+                    authenticated = True
+
+    if not authenticated:
+        raise HTTPException(status_code=401, detail="Authentication required for investigation stream")
+
+    return StreamingResponse(
+        subscribe_workflow_stream(investigation_id, last_event_id, db=db),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ============================================================================
+# 2. WORKFLOW CONTROL (START, PAUSE, CANCEL, STEP)
+# ============================================================================
+
+@router.post("/{investigation_id}/start", response_model=InvestigationDetailResponse)
+def start_investigation(
+    investigation_id: uuid.UUID,
+    payload: Optional[InvestigationStartRequest] = None,
+    auth_ctx: Tuple[Organization, UserOrganizationMembership] = Depends(require_role(MembershipRole.OPERATOR)),
+    db: Session = Depends(get_db),
+):
+    """Start or resume execution of a type-specific investigation workflow."""
+    org, membership = auth_ctx
+    inv = db.query(Investigation).filter(
+        Investigation.organization_id == org.id,
+        Investigation.id == investigation_id,
+    ).first()
+    if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
-    return build_timeline(investigation.incident_id, db)
+
+    if inv.status in (InvestigationStatus.COMPLETED, InvestigationStatus.ABSTAINED):
+        return inv
+
+    inv.started_by_user_id = membership.user_id
+    db.commit()
+
+    w_type = payload.workflow_type if (payload and payload.workflow_type) else inv.workflow_type
+    lookback = payload.lookback_window_minutes if payload else 120
+
+    if w_type == "repository_task":
+        run_repository_task(db, org.id, inv.work_item_id or inv.id, inv.id)
+    elif w_type == "bug":
+        run_bug_investigation(db, org.id, inv.work_item_id or inv.id, inv.id)
+    elif w_type == "feature":
+        run_feature_implementation(db, org.id, inv.work_item_id or inv.id, inv.id)
+    elif w_type == "security_incident":
+        run_security_investigation(db, org.id, inv.work_item_id or inv.id, inv.id)
+    else:  # production_incident
+        run_production_investigation(db, org.id, inv.incident_id or inv.id, inv.id, lookback)
+
+    db.refresh(inv)
+    return inv
 
 
-# --- Historical Search ---
-
-@router.get("/investigations/search-similar")
-async def search_similar_incidents(
-    q: str,
-    service: Optional[str] = None,
-    limit: int = 5,
-    current_user=Depends(get_current_user),
+@router.post("/{investigation_id}/pause", response_model=InvestigationDetailResponse)
+def pause_investigation(
+    investigation_id: uuid.UUID,
+    auth_ctx: Tuple[Organization, UserOrganizationMembership] = Depends(require_role(MembershipRole.OPERATOR)),
+    db: Session = Depends(get_db),
 ):
-    """Search for similar past incidents."""
-    from app.services.historical import search_similar_incidents
-    return search_similar_incidents(q, service, limit)
+    """Pause an active investigation workflow."""
+    org, _ = auth_ctx
+    inv = db.query(Investigation).filter(
+        Investigation.organization_id == org.id,
+        Investigation.id == investigation_id,
+    ).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+
+    transition_investigation_status(db, inv, InvestigationStatus.PAUSED)
+    return inv
 
 
-# --- Evaluation ---
+@router.post("/{investigation_id}/cancel", response_model=InvestigationDetailResponse)
+def cancel_investigation(
+    investigation_id: uuid.UUID,
+    auth_ctx: Tuple[Organization, UserOrganizationMembership] = Depends(require_role(MembershipRole.OPERATOR)),
+    db: Session = Depends(get_db),
+):
+    """Cancel an investigation workflow immediately."""
+    org, _ = auth_ctx
+    inv = db.query(Investigation).filter(
+        Investigation.organization_id == org.id,
+        Investigation.id == investigation_id,
+    ).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+
+    transition_investigation_status(db, inv, InvestigationStatus.CANCELLED)
+    return inv
+
+
+# ============================================================================
+# 3. DETAILS & TASK STEP INSPECTION
+# ============================================================================
+
+@router.get("/{investigation_id}", response_model=InvestigationDetailResponse)
+def get_investigation_detail(
+    investigation_id: uuid.UUID,
+    auth_ctx: Tuple[Organization, UserOrganizationMembership] = Depends(require_role(MembershipRole.VIEWER)),
+    db: Session = Depends(get_db),
+):
+    """Get full state, progress, and tasks for an investigation."""
+    org, _ = auth_ctx
+    inv = db.query(Investigation).filter(
+        Investigation.organization_id == org.id,
+        Investigation.id == investigation_id,
+    ).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    return inv
+
+
+@router.get("/{investigation_id}/tasks", response_model=List[InvestigationTaskResponse])
+def list_investigation_tasks(
+    investigation_id: uuid.UUID,
+    auth_ctx: Tuple[Organization, UserOrganizationMembership] = Depends(require_role(MembershipRole.VIEWER)),
+    db: Session = Depends(get_db),
+):
+    """List discrete task step executions for an investigation."""
+    org, _ = auth_ctx
+    inv = db.query(Investigation).filter(
+        Investigation.organization_id == org.id,
+        Investigation.id == investigation_id,
+    ).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+
+    tasks = db.query(InvestigationTask).filter(
+        InvestigationTask.investigation_id == investigation_id,
+    ).order_by(InvestigationTask.order.asc()).all()
+    return tasks
+
+
+# ============================================================================
+# 4. EVALUATION & BENCHMARK DATASET (LEGACY ADAPTER)
+# ============================================================================
 
 @router.get("/eval/benchmark")
-async def get_benchmark_dataset(
-    current_user=Depends(get_current_user),
-):
-    """Get benchmark dataset for evaluation."""
-    from app.services.benchmark_dataset import get_benchmark_dataset
-    return get_benchmark_dataset()
-
-
-@router.post("/eval/grounding")
-async def evaluate_grounding(
-    root_cause_claim: str,
-    evidence: List[dict],
-    affected_files: Optional[List[str]] = None,
-    current_user=Depends(get_current_user),
-):
-    """Evaluate if a root cause is grounded in evidence."""
-    from app.services.evaluation import evaluate_grounding
-    return evaluate_grounding(root_cause_claim, evidence, affected_files or [])
+def get_benchmark_dataset_route():
+    """Get the benchmark evaluation incidents dataset."""
+    from app.services.benchmark_dataset import BENCHMARK_DATASET
+    return [
+        {
+            "id": b.id,
+            "title": b.title,
+            "description": b.description,
+            "service": b.service,
+            "expected_root_cause": b.expected_root_cause,
+            "expected_files": b.expected_files,
+            "expected_commits": b.expected_commits,
+            "severity": b.severity,
+            "category": b.category,
+            "difficulty": b.difficulty,
+            "error_signature": b.error_signature,
+        }
+        for b in BENCHMARK_DATASET
+    ]

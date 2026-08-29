@@ -52,7 +52,6 @@ function IntegrationsContent() {
   const justConnected = searchParams.get("connected") === "github";
   const [repos, setRepos] = useState<Repository[]>([]);
   const [githubConnected, setGithubConnected] = useState(false);
-  const [githubConfigured, setGithubConfigured] = useState(false);
   const [patInput, setPatInput] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState("");
@@ -95,7 +94,6 @@ function IntegrationsContent() {
       .catch(() => {});
     getGithubStatus(token)
       .then((s) => {
-        setGithubConfigured(s.configured);
         if (s.connected) setGithubConnected(true);
       })
       .catch(() => {});

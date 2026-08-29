@@ -4,13 +4,20 @@ services:
     name: sentinel-api
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     envVars:
       - key: DATABASE_URL
         sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: LLM_PROVIDER
-        value: mock
+        value: nemotron
+      - key: LLM_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        sync: false
       - key: GITHUB_CLIENT_ID
         sync: false
       - key: GITHUB_CLIENT_SECRET
@@ -43,6 +50,7 @@ services:
     name: sentinel-worker
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     startCommand: sh -c "alembic upgrade head && python worker.py"
     envVars:
       - key: DATABASE_URL
@@ -50,7 +58,13 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: LLM_PROVIDER
-        value: mock
+        value: nemotron
+      - key: LLM_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        sync: false
       - key: GITHUB_CLIENT_ID
         sync: false
       - key: GITHUB_CLIENT_SECRET

@@ -80,6 +80,15 @@ export interface InvestigationSummary {
   progress_percent: number;
   confidence: string | null;
   root_cause_found: boolean;
+  workflow_type?: string;
+  current_step?: string;
+  current_step_index?: number;
+  total_steps?: number;
+  abstained?: boolean;
+  abstention_reason?: string;
+  security_case_id?: string;
+  evidence_snapshot_id?: string;
+  plan_json?: any;
 }
 
 export interface Incident {

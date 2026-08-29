@@ -289,14 +289,18 @@ def create_incident_from_alert(
 
     # Auto-generate incident number
     from sqlalchemy import text
-    try:
-        next_number = db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
-    except Exception:
-        db.rollback()
+    if db.bind and db.bind.dialect.name == "sqlite":
         max_num = db.execute(text("SELECT COALESCE(MAX(number), 0) FROM incidents")).scalar()
-        db.execute(text(f"CREATE SEQUENCE IF NOT EXISTS incident_number_seq START WITH {max_num + 1}"))
-        db.flush()
-        next_number = db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
+        next_number = (max_num or 0) + 1
+    else:
+        try:
+            next_number = db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
+        except Exception:
+            db.rollback()
+            max_num = db.execute(text("SELECT COALESCE(MAX(number), 0) FROM incidents")).scalar()
+            db.execute(text(f"CREATE SEQUENCE IF NOT EXISTS incident_number_seq START WITH {max_num + 1}"))
+            db.flush()
+            next_number = db.execute(text("SELECT nextval('incident_number_seq')")).scalar()
 
     incident = Incident(
         number=next_number,
@@ -318,12 +322,13 @@ def create_incident_from_alert(
     db.flush()
 
     # Add signal
+    import uuid as _uuid
     signal = IncidentSignal(
         incident_id=incident.id,
         source=alert.source,
         signal_type="alert",
         content=alert.title or "",
-        fingerprint=alert.external_id or "",
+        fingerprint=alert.external_id or f"sig_{_uuid.uuid4().hex}",
     )
     db.add(signal)
     db.commit()

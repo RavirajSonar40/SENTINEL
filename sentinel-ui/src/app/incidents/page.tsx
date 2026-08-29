@@ -264,6 +264,8 @@ function SelectFilter({ label, options, value, onChange }: {
   return (
     <div className="relative">
       <select
+        aria-label={label}
+        title={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="px-3 py-1.5 pr-8 font-mono text-[12px] text-on-surface bg-surface-container-high border border-outline-variant rounded-md appearance-none cursor-pointer hover:border-primary/50 transition-colors"

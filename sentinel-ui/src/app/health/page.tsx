@@ -35,14 +35,16 @@ export default function HealthPage() {
         <div className="max-w-[1400px] mx-auto space-y-6">
           {/* Overall Status */}
           <div className={`p-4 rounded-lg border ${
-            health?.status === "healthy"
+            loading
+              ? "bg-surface-variant/20 border-border animate-pulse"
+              : health?.status === "healthy"
               ? "bg-primary/10 border-primary/20"
               : "bg-tertiary/10 border-tertiary/20"
           }`}>
             <div className="flex items-center gap-3">
-              <span className={`w-3 h-3 rounded-full ${health?.status === "healthy" ? "bg-primary" : "bg-tertiary"}`} />
+              <span className={`w-3 h-3 rounded-full ${loading ? "bg-muted animate-ping" : health?.status === "healthy" ? "bg-primary" : "bg-tertiary"}`} />
               <span className="text-[14px] font-semibold text-on-surface">
-                System {health?.status === "healthy" ? "Operational" : "Degraded"}
+                {loading ? "Checking System Status..." : `System ${health?.status === "healthy" ? "Operational" : "Degraded"}`}
               </span>
             </div>
           </div>

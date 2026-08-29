@@ -15,14 +15,22 @@ const navSections = [
     label: "INCIDENT RESPONSE",
     items: [
       { href: "/incidents", icon: "emergency", label: "Incidents" },
+      { href: "/security", icon: "shield", label: "Security Command", tag: "P17" },
+      { href: "/reliability", icon: "speed", label: "SLOs & Reliability", tag: "P16" },
+      { href: "/monitoring", icon: "sensors", label: "Monitoring & Signals", tag: "Live" },
       { href: "/automatic-response", icon: "bolt", label: "Automatic Response", tag: "New" },
       { href: "/investigations", icon: "psychology", label: "Investigations" },
       { href: "/alerts", icon: "notifications", label: "Alerts" },
     ],
+
   },
   {
     label: "SYSTEM",
     items: [
+      { href: "/changes", icon: "history_toggle_off", label: "Change Ledger", tag: "P7" },
+      { href: "/topology", icon: "schema", label: "System Graph", tag: "P6" },
+      { href: "/catalog", icon: "account_tree", label: "Catalog & Topology" },
+      { href: "/deployments", icon: "rocket_launch", label: "Deployments" },
       { href: "/services", icon: "settings_input_component", label: "Services" },
       { href: "/repositories", icon: "folder", label: "Repositories" },
       { href: "/integrations", icon: "hub", label: "Integrations" },

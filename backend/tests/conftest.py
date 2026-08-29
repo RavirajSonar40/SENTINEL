@@ -5,7 +5,11 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 # Add backend to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+os.environ["ENVIRONMENT"] = "testing"
+
+from app.core.config import settings
+settings.ENVIRONMENT = "testing"
 
 
 @pytest.fixture(autouse=True)

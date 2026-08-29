@@ -49,7 +49,7 @@ export default function RepositoriesPage() {
         const data = await res.json().catch(() => ({}));
         setSyncError(data.detail || "Sync failed");
       }
-    } catch (e) {
+    } catch {
       setSyncError("Network error - is the backend running?");
     } finally {
       setSyncingId(null);
@@ -72,7 +72,7 @@ export default function RepositoriesPage() {
         const data = await res.json().catch(() => ({}));
         setSyncError(data.detail || "Sync failed");
       }
-    } catch (e) {
+    } catch {
       setSyncError("Network error - is the backend running?");
     } finally {
       setSyncAllLoading(false);

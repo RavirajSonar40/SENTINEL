@@ -84,6 +84,8 @@ async def trigger_investigation(
     incident = db.query(Incident).filter(Incident.id == request.incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+    if not incident.organization_id or incident.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Incident does not belong to the active organization")
 
     # Resolve candidate repositories
     if request.repository:
@@ -133,6 +135,7 @@ async def trigger_investigation(
 
         # Create investigation for this repository
         investigation = Investigation(
+            organization_id=incident.organization_id,
             incident_id=incident.id,
             status=InvestigationStatus.PLANNING.value,
             confidence="low",

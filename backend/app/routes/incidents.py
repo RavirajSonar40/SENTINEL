@@ -251,6 +251,7 @@ def start_investigation(
         )
 
     investigation = Investigation(
+        organization_id=incident.organization_id,
         incident_id=incident.id,
         status="planning",
     )

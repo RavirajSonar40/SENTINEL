@@ -168,6 +168,7 @@ async def trigger_investigation(
         evidence_count = 0
         for ev_data in state.evidence_collected[:20]:
             evidence = Evidence(
+                organization_id=incident.organization_id,
                 investigation_id=investigation.id,
                 incident_id=incident.id,
                 source_type=EvidenceSourceType.COMMIT.value if "code" in ev_data.get("source", "") else EvidenceSourceType.FILE.value,
@@ -192,6 +193,7 @@ async def trigger_investigation(
         # Persist hypotheses
         for h in hypotheses[:10]:
             hyp_model = HypothesisModel(
+                organization_id=incident.organization_id,
                 investigation_id=investigation.id,
                 incident_id=incident.id,
                 label=h.label,
@@ -213,6 +215,7 @@ async def trigger_investigation(
             root_cause_found = True
             any_root_cause = True
             rc = RootCause(
+                organization_id=incident.organization_id,
                 investigation_id=investigation.id,
                 incident_id=incident.id,
                 summary=root_cause.get("label", "Root Cause"),
@@ -232,6 +235,7 @@ async def trigger_investigation(
                     token=state.github_token,
                 )
                 fix_model = ProposedFix(
+                    organization_id=incident.organization_id,
                     investigation_id=investigation.id,
                     root_cause_id=rc.id,
                     incident_id=incident.id,

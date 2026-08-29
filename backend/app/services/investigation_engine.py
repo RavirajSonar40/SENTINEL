@@ -72,6 +72,29 @@ async def tool_search_code(args: Dict) -> Dict:
         before_time=before_time,
         limit=args.get("limit", 10),
     )
+    # A synced repository may have metadata but no vectors yet. Fall back to
+    # GitHub's authenticated code search so a first investigation can still
+    # discover the relevant source files instead of reporting false zero
+    # evidence.
+    if not results and repository and args.get("_github_token") and "/" in repository:
+        try:
+            from app.services.github import GitHubClient
+            client = GitHubClient(token=args["_github_token"])
+            found = await client.search_code(f"{query} repo:{repository}", per_page=min(args.get("limit", 10), 30))
+            for item in (found.get("items") or [])[:args.get("limit", 10)]:
+                path = item.get("path", "")
+                parts = repository.split("/", 1)
+                content = await client.get_file(parts[0], parts[1], path)
+                preview = ""
+                if content and content.get("content"):
+                    import base64
+                    preview = base64.b64decode(content["content"]).decode("utf-8", errors="replace")[:500]
+                results.append(type("SearchResult", (), {"result": type("Result", (), {
+                    "file_path": path, "symbol_name": "", "chunk_type": "github_code",
+                    "score": 0.5, "metadata": {}, "content": preview,
+                })(), "source": "github"})())
+        except Exception:
+            pass
     return {
         "results": [
             {

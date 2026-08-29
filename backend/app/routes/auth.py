@@ -3,11 +3,12 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from uuid import UUID
+import uuid
 
 from app.core.database import get_db
 from app.core.auth import hash_password, verify_password, create_access_token, get_current_user
 from app.core.rate_limit import limiter
-from app.models.incident import User
+from app.models.incident import User, Organization, UserOrganizationMembership, MembershipRole
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -45,12 +46,26 @@ def register(request: Request, payload: UserCreate, db: Session = Depends(get_db
     if existing:
         raise HTTPException(status_code=400, detail="Username or email already exists")
 
+    organization = Organization(
+        name=f"{payload.username}'s Organization",
+        slug=f"{payload.username.lower().replace(' ', '-')}-{uuid.uuid4().hex[:8]}",
+    )
+    db.add(organization)
+    db.flush()
+
     user = User(
         username=payload.username,
         email=payload.email,
         hashed_password=hash_password(payload.password),
+        organization_id=organization.id,
     )
     db.add(user)
+    db.flush()
+    db.add(UserOrganizationMembership(
+        user_id=user.id,
+        organization_id=organization.id,
+        role=MembershipRole.OWNER,
+    ))
     db.commit()
     db.refresh(user)
 

@@ -10,6 +10,7 @@ import httpx
 import hmac
 import hashlib
 import logging
+import uuid
 
 logger = logging.getLogger("sentinel.github")
 
@@ -18,7 +19,8 @@ from app.core.auth import get_current_user
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.models.incident import (
-    User, Repository, GitHubInstallation, GitHubRepositorySync,
+    User, Organization, UserOrganizationMembership, MembershipRole,
+    Repository, GitHubInstallation, GitHubRepositorySync,
     GitHubWebhookEvent,
 )
 from app.services.github import GitHubClient, get_github_client
@@ -61,6 +63,25 @@ async def connect_with_token(
 
     github_login = user_data["login"]
 
+    # Legacy users created before organization onboarding may not have a
+    # tenant yet. Create one before repository synchronization so every
+    # repository is assigned to an organization and tenant isolation remains
+    # intact.
+    if not current_user.organization_id:
+        organization = Organization(
+            name=f"{current_user.username}'s Organization",
+            slug=f"{current_user.username.lower().replace(' ', '-')}-{uuid.uuid4().hex[:8]}",
+        )
+        db.add(organization)
+        db.flush()
+        current_user.organization_id = organization.id
+        db.add(UserOrganizationMembership(
+            user_id=current_user.id,
+            organization_id=organization.id,
+            role=MembershipRole.OWNER,
+        ))
+        db.flush()
+
     # Store as installation
     existing = db.query(GitHubInstallation).filter(
         GitHubInstallation.account_login == github_login
@@ -93,12 +114,16 @@ async def connect_with_token(
             repo_name = repo_data["name"]
             full_name = repo_data["full_name"]
 
-            repo = db.query(Repository).filter(Repository.full_name == full_name).first()
+            repo = db.query(Repository).filter(
+                Repository.full_name == full_name,
+                Repository.organization_id == current_user.organization_id,
+            ).first()
             if not repo:
                 repo = Repository(
                     name=repo_name,
                     full_name=full_name,
                     owner_id=current_user.id,
+                    organization_id=current_user.organization_id,
                     default_branch=repo_data.get("default_branch", "main"),
                     github_url=repo_data.get("html_url"),
                     installation_id=existing.id if existing else inst_record.id,
@@ -138,12 +163,16 @@ async def sync_repos_token(
         synced = 0
         for repo_data in repos:
             full_name = repo_data["full_name"]
-            repo = db.query(Repository).filter(Repository.full_name == full_name).first()
+            repo = db.query(Repository).filter(
+                Repository.full_name == full_name,
+                Repository.organization_id == current_user.organization_id,
+            ).first()
             if not repo:
                 repo = Repository(
                     name=repo_data["name"],
                     full_name=full_name,
                     owner_id=current_user.id,
+                    organization_id=current_user.organization_id,
                     default_branch=repo_data.get("default_branch", "main"),
                     github_url=repo_data.get("html_url"),
                     installation_id=installation.id,

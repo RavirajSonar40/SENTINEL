@@ -51,7 +51,7 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    startCommand: sh -c "alembic upgrade head && python worker.py"
+    startCommand: sh -c "python bootstrap_database.py && alembic upgrade head && python worker.py"
     envVars:
       - key: DATABASE_URL
         sync: false

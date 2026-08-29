@@ -31,7 +31,9 @@ function getInitialAuth(): AuthState {
   const token = localStorage.getItem("sentinel_token");
   const userId = localStorage.getItem("sentinel_user_id");
   const username = localStorage.getItem("sentinel_username");
-  if (!token || !userId || !username) return { token: null, userId: null, username: null, isLoading: false };
+  // The token is the source of truth. Profile fields are cacheable metadata
+  // and may be absent after a browser cleanup or an older deployment.
+  if (!token) return { token: null, userId: null, username: null, isLoading: false };
   return { token, userId, username, isLoading: true };
 }
 
@@ -45,8 +47,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fetch(`${API_BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((res) => {
-        if (!res.ok) throw new Error("invalid");
+      .then(async (res) => {
+        if (res.status === 401) {
+          throw new Error("invalid");
+        }
+        if (!res.ok) {
+          throw new Error("temporary");
+        }
         return res.json();
       })
       .then((data) => {
@@ -54,9 +61,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("sentinel_username", data.username);
         setState({ token, userId: data.id, username: data.username, isLoading: false });
       })
-      .catch(() => {
-        clearAuth();
-        setState({ token: null, userId: null, username: null, isLoading: false });
+      .catch((error) => {
+        // Do not log a user out because Render is waking up or temporarily
+        // unavailable. Only an explicit 401 invalidates the session.
+        if (error instanceof Error && error.message === "invalid") {
+          clearAuth();
+          setState({ token: null, userId: null, username: null, isLoading: false });
+          return;
+        }
+        setState((current) => ({ ...current, isLoading: false }));
       });
   }, [state.token]); // eslint-disable-line react-hooks/exhaustive-deps
 

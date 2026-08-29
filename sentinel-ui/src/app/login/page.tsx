@@ -26,7 +26,7 @@ export default function LoginPage() {
     try {
       await login(username, password);
       console.log("Login successful, redirecting...");
-      window.location.href = "/";
+      router.replace("/");
     } catch (err: unknown) {
       console.error("Login error:", err);
       setError(err instanceof Error ? err.message : "Login failed — is the backend running on port 8000?");

@@ -28,7 +28,16 @@ class GitHubClient:
         the response's ``Link`` header prevents accounts with more than 100
         repositories from being silently truncated.
         """
-        params = {"per_page": 100, "page": 1, "sort": "updated"}
+        params = {
+            "per_page": 100,
+            "page": 1,
+            "sort": "updated",
+            # Include repositories owned by the user, forked by the user,
+            # shared directly as a collaborator, and provided through an
+            # organization membership.
+            "affiliation": "owner,collaborator,organization_member",
+            "visibility": "all",
+        }
         if installation_id:
             params["installation_id"] = installation_id
         async with self._client() as client:

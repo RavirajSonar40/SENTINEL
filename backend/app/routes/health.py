@@ -36,17 +36,24 @@ def readiness_check(db: Session = Depends(get_db)):
 
     # Redis
     if settings.REDIS_URL:
+        redis_client = None
         try:
             import redis as sync_redis
             url = settings.REDIS_URL
             if url.startswith("rediss://"):
-                r = sync_redis.from_url(url, socket_timeout=2, ssl_cert_reqs=None)
+                redis_client = sync_redis.from_url(url, socket_connect_timeout=2, socket_timeout=2, ssl_cert_reqs=None)
             else:
-                r = sync_redis.from_url(url, socket_timeout=2)
-            r.ping()
+                redis_client = sync_redis.from_url(url, socket_connect_timeout=2, socket_timeout=2)
+            redis_client.ping()
             checks["redis"] = "ok"
         except Exception:
             checks["redis"] = "unavailable"
+        finally:
+            if redis_client is not None:
+                try:
+                    redis_client.close()
+                except Exception:
+                    pass
     else:
         checks["redis"] = "not_configured"
 

@@ -196,17 +196,24 @@ def get_system_health(current_user: User = Depends(get_current_user)):
         checks["vector_store"] = {"status": "error", "error": "Vector store unavailable"}
 
     # Redis
+    redis_client = None
     try:
         import redis as sync_redis
         url = settings.REDIS_URL
         if url.startswith("rediss://"):
-            r = sync_redis.from_url(url, socket_timeout=2, ssl_cert_reqs=None)
+            redis_client = sync_redis.from_url(url, socket_connect_timeout=2, socket_timeout=2, ssl_cert_reqs=None)
         else:
-            r = sync_redis.from_url(url, socket_timeout=2)
-        r.ping()
+            redis_client = sync_redis.from_url(url, socket_connect_timeout=2, socket_timeout=2)
+        redis_client.ping()
         checks["redis"] = {"status": "operational"}
     except Exception as e:
-        checks["redis"] = {"status": "error", "error": str(e)}
+        checks["redis"] = {"status": "error", "error": str(e)[:200]}
+    finally:
+        if redis_client is not None:
+            try:
+                redis_client.close()
+            except Exception:
+                pass
 
     # LLM
     from app.services.llm import get_config

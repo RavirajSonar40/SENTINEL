@@ -7,8 +7,6 @@ current declarative schema and records the migration head. Existing databases
 continue through the normal Alembic upgrade path.
 """
 
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import inspect, text
 
 from app.core.database import Base, engine
@@ -28,11 +26,18 @@ def initialize_database() -> None:
             "CREATE TABLE alembic_version ("
             "version_num VARCHAR(255) NOT NULL PRIMARY KEY)"
         ))
-    alembic_config = Config("alembic.ini")
     # The declarative schema includes all tables, but migration 036 also
-    # installs the database-level forensic immutability triggers. Run that
-    # final migration instead of stamping directly at head.
-    command.stamp(alembic_config, "035_add_phase16_advanced_reliability")
+    # installs the database-level forensic immutability triggers. Record the
+    # pre-036 revision directly; the container command runs `upgrade head`
+    # immediately afterward and applies 036 normally.
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) "
+                "VALUES (:version)"
+            ),
+            {"version": "035_add_phase16_advanced_reliability"},
+        )
 
 
 if __name__ == "__main__":

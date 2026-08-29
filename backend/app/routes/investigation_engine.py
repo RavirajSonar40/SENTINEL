@@ -81,7 +81,10 @@ async def trigger_investigation(
     from app.services.repository_resolver import resolve_repositories
 
     # Get incident
-    incident = db.query(Incident).filter(Incident.id == request.incident_id).first()
+    incident = db.query(Incident).filter(
+        Incident.id == request.incident_id,
+        Incident.organization_id == current_user.organization_id,
+    ).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     if not incident.organization_id or incident.organization_id != current_user.organization_id:
@@ -749,10 +752,12 @@ async def trigger_investigation_stream(
         raise HTTPException(status_code=404, detail="Incident not found")
 
     investigation = db.query(Investigation).filter(
-        Investigation.incident_id == incident.id
+        Investigation.incident_id == incident.id,
+        Investigation.organization_id == current_user.organization_id,
     ).first()
     if not investigation:
         investigation = Investigation(
+            organization_id=current_user.organization_id,
             incident_id=incident.id,
             status=InvestigationStatus.PLANNING.value,
             confidence="low",
@@ -796,12 +801,21 @@ async def get_engine_status(
     db: Session = Depends(get_db),
 ):
     """Get investigation engine status and evidence breakdown."""
-    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    investigation = db.query(Investigation).filter(
+        Investigation.id == investigation_id,
+        Investigation.organization_id == current_user.organization_id,
+    ).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
 
-    evidence = db.query(Evidence).filter(Evidence.investigation_id == investigation_id).all()
-    hypotheses = db.query(HypothesisModel).filter(HypothesisModel.investigation_id == investigation_id).all()
+    evidence = db.query(Evidence).filter(
+        Evidence.investigation_id == investigation_id,
+        Evidence.organization_id == current_user.organization_id,
+    ).all()
+    hypotheses = db.query(HypothesisModel).filter(
+        HypothesisModel.investigation_id == investigation_id,
+        HypothesisModel.organization_id == current_user.organization_id,
+    ).all()
 
     evidence_by_source = {}
     for ev in evidence:

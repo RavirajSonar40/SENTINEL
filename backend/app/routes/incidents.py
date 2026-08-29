@@ -177,7 +177,10 @@ def get_incident(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    incident = db.query(Incident).filter(Incident.id == UUID(incident_id)).first()
+    incident = db.query(Incident).filter(
+        Incident.id == UUID(incident_id),
+        Incident.organization_id == current_user.organization_id,
+    ).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     if current_user.role != "admin" and incident.creator_id != current_user.id:
@@ -192,7 +195,10 @@ def update_incident(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    incident = db.query(Incident).filter(Incident.id == UUID(incident_id)).first()
+    incident = db.query(Incident).filter(
+        Incident.id == UUID(incident_id),
+        Incident.organization_id == current_user.organization_id,
+    ).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     if current_user.role != "admin" and incident.creator_id != current_user.id:

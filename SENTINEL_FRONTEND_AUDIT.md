@@ -1613,3 +1613,19 @@ Service monitored
 ```
 
 The current frontend is a useful shell for this product, but it needs a substantial data-truth, operations, multi-repository, and investigation-workspace upgrade before it represents the complete Sentinel vision.
+
+## Follow-up Audit — Post-Phase 17
+
+The second audit covered all 27 App Router routes, shared navigation, API clients, deployment configuration, and common loading/error/empty states.
+
+Resolved findings:
+
+- Settings now exposes Nemotron as the production provider and labels Mock as development-only.
+- Settings load/save failures are visible to the user instead of being silently swallowed.
+- The footer now identifies the dependency-neutral vector database status instead of incorrectly naming Qdrant when Pinecone is configured.
+- The notification menu is explicitly labeled as activity notifications and now shows loading and error states while reading the audit-log feed.
+- The Vercel configuration no longer rewrites production API requests to localhost.
+
+Remaining product limitation:
+
+- The notification menu is an audit-activity feed, not a persisted read/unread notification system. A future notification model and API are required for durable acknowledgement, per-user unread counts, and push/email delivery.

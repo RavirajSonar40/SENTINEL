@@ -70,7 +70,7 @@ function getAuthHeaders(token?: string): HeadersInit {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  const effectiveToken = token || (typeof window !== "undefined" ? localStorage.getItem("token") : null);
+  const effectiveToken = token || (typeof window !== "undefined" ? localStorage.getItem("sentinel_token") : null);
   if (effectiveToken) {
     headers["Authorization"] = `Bearer ${effectiveToken}`;
   }

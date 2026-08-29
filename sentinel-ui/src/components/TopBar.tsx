@@ -18,6 +18,8 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
   const { username, token } = useAuth();
   const router = useRouter();
   const [notifications, setNotifications] = useState<AuditLog[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -28,6 +30,7 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
 
   useEffect(() => {
     if (!token) return;
+    setNotificationsLoading(true);
     listAuditLogs(token, 20)
       .then((logs) => {
         const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -35,7 +38,8 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
           logs.filter((l) => l.created_at && new Date(l.created_at) > dayAgo)
         );
       })
-      .catch(() => {});
+      .catch(() => setNotificationsError(true))
+      .finally(() => setNotificationsLoading(false));
   }, [token]);
 
   useEffect(() => {
@@ -177,7 +181,7 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
             {showNotifs && (
               <div className="absolute right-0 top-full mt-1 w-72 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg z-50 overflow-hidden">
                 <div className="px-3 py-2 border-b border-outline-variant flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider">Notifications</span>
+                  <span className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider">Activity notifications</span>
                   {notifications.length > 0 && (
                     <button
                       onClick={() => setNotifications([])}
@@ -188,7 +192,11 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
                   )}
                 </div>
                 <div className="max-h-64 overflow-y-auto">
-                  {notifications.length === 0 ? (
+                  {notificationsLoading ? (
+                    <div className="p-4 text-center text-[12px] text-on-surface-variant">Loading activity…</div>
+                  ) : notificationsError ? (
+                    <div className="p-4 text-center text-[12px] text-red-400">Unable to load notifications</div>
+                  ) : notifications.length === 0 ? (
                     <div className="p-4 text-center text-[12px] text-on-surface-variant">
                       No notifications
                     </div>

@@ -6,7 +6,7 @@ const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").re
 
 interface SystemStatus {
   postgres: string;
-  qdrant: string;
+  vectorStore: string;
   aiModel: string;
   uptime: string;
 }
@@ -14,8 +14,8 @@ interface SystemStatus {
 export default function Footer() {
   const [status, setStatus] = useState<SystemStatus>({
     postgres: "Unknown",
-    qdrant: "Unknown",
-    aiModel: "mock",
+    vectorStore: "Unknown",
+    aiModel: "Unknown",
     uptime: "—",
   });
 
@@ -30,8 +30,8 @@ export default function Footer() {
       .then((data) => {
         setStatus({
           postgres: data.database === "connected" ? "Connected" : "Disconnected",
-          qdrant: data.vector_store === "connected" ? "Connected" : "Unavailable",
-          aiModel: data.llm_provider || "mock",
+          vectorStore: data.vector_store === "connected" ? "Connected" : "Unavailable",
+          aiModel: data.llm_provider || "Unknown",
           uptime: data.uptime_seconds
             ? `${Math.floor(data.uptime_seconds / 3600)}h ${Math.floor((data.uptime_seconds % 3600) / 60)}m`
             : "—",
@@ -50,7 +50,7 @@ export default function Footer() {
         <span className="text-outline-variant">|</span>
         <span>PostgreSQL: {status.postgres}</span>
         <span className="text-outline-variant">|</span>
-        <span>Qdrant: {status.qdrant}</span>
+        <span>Vector DB: {status.vectorStore}</span>
       </div>
       <div className="flex items-center gap-3">
         <span>AI Model: {status.aiModel}</span>

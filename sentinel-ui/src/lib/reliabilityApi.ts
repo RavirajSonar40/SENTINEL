@@ -113,7 +113,7 @@ export interface IncidentBusinessImpactItem {
 }
 
 async function authFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const token = typeof window !== "undefined" ? localStorage.getItem("sentinel_token") : null;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),

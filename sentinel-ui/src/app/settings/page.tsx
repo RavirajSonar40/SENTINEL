@@ -8,28 +8,34 @@ import { getSettings, updateSettings, Settings } from "@/lib/api";
 export default function SettingsPage() {
   const { token } = useAuth();
   const [settings, setSettings] = useState<Settings>({
-    llm_provider: "mock",
-    llm_model: "gpt-4",
+    llm_provider: "nemotron",
+    llm_model: "nvidia/nemotron-3-ultra-550b-a55b",
     auto_investigate: true,
     auto_merge: false,
     notification_email: "",
   });
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
     getSettings(token)
       .then(setSettings)
-      .catch(() => {})
+      .catch((err) => setError(err instanceof Error ? err.message : "Unable to load settings"))
       .finally(() => setLoading(false));
   }, [token]);
 
   const handleSave = async () => {
     if (!token) return;
-    await updateSettings(token, settings);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      setError(null);
+      await updateSettings(token, settings);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to save settings");
+    }
   };
 
   return (
@@ -53,7 +59,8 @@ export default function SettingsPage() {
                   onChange={(e) => setSettings({ ...settings, llm_provider: e.target.value })}
                   className="w-full bg-surface-container border border-outline-variant rounded px-3 py-2 text-[12px] text-on-surface"
                 >
-                  <option value="mock">Mock (Development)</option>
+                  <option value="nemotron">Nemotron (NVIDIA)</option>
+                  <option value="mock">Mock (Development only)</option>
                   <option value="openai">OpenAI</option>
                   <option value="anthropic">Anthropic</option>
                   <option value="kimi">Kimi</option>
@@ -130,6 +137,7 @@ export default function SettingsPage() {
             </button>
           </div>
           </form>
+          {error && <p role="alert" className="text-[12px] text-red-400">{error}</p>}
         </div>
       </main>
     </>

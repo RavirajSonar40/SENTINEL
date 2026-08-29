@@ -6,7 +6,7 @@ interface RequestOptions extends RequestInit {
 
 function getStoredToken(): string | undefined {
   if (typeof window !== "undefined") {
-    return localStorage.getItem("token") || undefined;
+    return localStorage.getItem("sentinel_token") || undefined;
   }
   return undefined;
 }

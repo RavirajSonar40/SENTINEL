@@ -10,6 +10,10 @@ continue through the normal Alembic upgrade path.
 from sqlalchemy import inspect, text
 
 from app.core.database import Base, engine
+# Import every model module before create_all so the metadata includes the
+# complete declarative schema (including organizations and catalog tables).
+from app.models import incident as _incident_models  # noqa: F401,E402
+from app.models import work_item as _work_item_models  # noqa: F401,E402
 
 
 def initialize_database() -> None:

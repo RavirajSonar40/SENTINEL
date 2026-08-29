@@ -64,6 +64,11 @@ allowed_origins = list({frontend_url, "http://localhost:3000", "http://127.0.0.1
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    # Vercel may serve the same deployment through a production alias and a
+    # generated *.vercel.app hostname.  Both are legitimate frontend origins
+    # for this application; wildcard origins are intentionally not used with
+    # credentials.
+    allow_origin_regex=r"https://[A-Za-z0-9-]+\.vercel\.app",
     allow_credentials=True,
     # OPTIONS is required for browser CORS preflight requests.  Without it,
     # authenticated POSTs such as registration are rejected before routing.

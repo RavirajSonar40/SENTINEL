@@ -2,7 +2,7 @@
  * Phase 14: Multi-Repository Remediation TypeScript API Client.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 export interface CandidateRepository {
   repository_id: string;

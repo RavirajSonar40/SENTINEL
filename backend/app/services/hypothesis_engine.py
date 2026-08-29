@@ -1,6 +1,7 @@
 """Hypothesis engine — generates competing hypotheses, critiques them, identifies root cause."""
 import hashlib
 import json
+import asyncio
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field
 
@@ -236,7 +237,9 @@ Collected evidence:
 {evidence_text}"""
 
     try:
-        result = await generate_json(system_prompt, user_prompt)
+        # A slow hosted model must not hold an incident in an indeterminate
+        # state. Local deterministic hypotheses are a safe fallback.
+        result = await asyncio.wait_for(generate_json(system_prompt, user_prompt), timeout=45.0)
         hypotheses = []
         for h_data in result.get("hypotheses", []):
             h = Hypothesis(

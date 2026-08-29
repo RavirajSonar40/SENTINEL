@@ -381,7 +381,9 @@ Service: {state.service or 'Unknown'}
 Repository: {state.repository or 'Unknown'}"""
 
     try:
-        result = await generate_json(system_prompt, user_prompt)
+        # Bound planning latency so the streamed investigation always reaches
+        # execution even when the hosted model is cold or overloaded.
+        result = await asyncio.wait_for(generate_json(system_prompt, user_prompt), timeout=45.0)
         tasks = []
         task_list = result.get("tasks", result) if isinstance(result, dict) else result
         if isinstance(task_list, list):

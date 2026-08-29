@@ -22,7 +22,10 @@ def initialize_database() -> None:
 
     Base.metadata.create_all(bind=engine)
     alembic_config = Config("alembic.ini")
-    command.stamp(alembic_config, "head")
+    # The declarative schema includes all tables, but migration 036 also
+    # installs the database-level forensic immutability triggers. Run that
+    # final migration instead of stamping directly at head.
+    command.stamp(alembic_config, "035_add_phase16_advanced_reliability")
 
 
 if __name__ == "__main__":

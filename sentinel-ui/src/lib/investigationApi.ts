@@ -7,7 +7,7 @@
  * - Live EventSource progress subscription.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 export interface InvestigationTask {
   id: string;

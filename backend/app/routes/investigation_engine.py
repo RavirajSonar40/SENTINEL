@@ -263,8 +263,10 @@ async def trigger_investigation(
                     db.add(fix_file)
 
         # Update investigation
-        investigation.status = InvestigationStatus.ROOT_CAUSE_ANALYSIS.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
+        investigation.root_cause_found = root_cause_found
+        investigation.status = InvestigationStatus.COMPLETED.value if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE.value
         investigation.confidence = state.confidence
+        investigation.progress_percent = 100
         investigation.completed_at = datetime.now(timezone.utc)
 
         last_state = state
@@ -688,8 +690,9 @@ async def _stream_investigation(
             if not investigation_record or not incident_record:
                 raise RuntimeError("Investigation records disappeared before results could be saved")
 
+            investigation_record.root_cause_found = root_cause_found
             investigation_record.status = (
-                InvestigationStatus.ROOT_CAUSE_ANALYSIS
+                InvestigationStatus.COMPLETED
                 if root_cause_found else InvestigationStatus.COLLECTING_EVIDENCE
             )
             investigation_record.confidence = state.confidence

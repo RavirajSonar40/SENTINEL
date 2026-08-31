@@ -110,6 +110,48 @@ class InvestigationTaskResponse(BaseModel):
     created_at: datetime
 
 
+class EvidenceSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    title: str
+    source_type: Optional[str] = None
+    summary: Optional[str] = None
+    file_path: Optional[str] = None
+    repository: Optional[str] = None
+    relevance_score: Optional[float] = None
+
+
+class HypothesisSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    label: str
+    description: Optional[str] = None
+    confidence: Optional[str] = None
+    status: Optional[str] = None
+    supporting_evidence_count: int = 0
+    contradicting_evidence_count: int = 0
+
+
+class RootCauseSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    summary: str
+    causal_explanation: Optional[str] = None
+    confidence: Optional[str] = None
+    affected_component: Optional[str] = None
+
+
+class ProposedFixSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    title: str
+    description: Optional[str] = None
+    fix_type: Optional[str] = None
+    status: Optional[str] = None
+    diff: Optional[str] = None
+    repository: Optional[str] = None
+
+
 class InvestigationDetailResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -143,6 +185,10 @@ class InvestigationDetailResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     tasks: List[InvestigationTaskResponse] = Field(default_factory=list)
+    evidence: List[EvidenceSummary] = Field(default_factory=list)
+    hypotheses: List[HypothesisSummary] = Field(default_factory=list)
+    root_causes: List[RootCauseSummary] = Field(default_factory=list)
+    proposed_fixes: List[ProposedFixSummary] = Field(default_factory=list)
 
 
 # ============================================================================

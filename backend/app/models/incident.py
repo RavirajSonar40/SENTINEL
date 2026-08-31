@@ -1412,6 +1412,14 @@ class Investigation(Base):
     )
     tasks = relationship("InvestigationTask", back_populates="investigation",
                          cascade="all, delete-orphan", order_by="InvestigationTask.order")
+    evidence = relationship("Evidence", backref="investigation", cascade="all, delete-orphan",
+                           foreign_keys="Evidence.investigation_id")
+    hypotheses = relationship("Hypothesis", backref="investigation", cascade="all, delete-orphan",
+                             foreign_keys="Hypothesis.investigation_id")
+    root_causes = relationship("RootCause", backref="investigation", cascade="all, delete-orphan",
+                              foreign_keys="RootCause.investigation_id")
+    proposed_fixes = relationship("ProposedFix", backref="investigation", cascade="all, delete-orphan",
+                                 foreign_keys="ProposedFix.investigation_id")
 
 
 

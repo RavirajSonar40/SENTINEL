@@ -222,8 +222,15 @@ def get_investigation_detail(
     db: Session = Depends(get_db),
 ):
     """Get full state, progress, and tasks for an investigation."""
+    from sqlalchemy.orm import joinedload
     org, _ = auth_ctx
-    inv = db.query(Investigation).filter(
+    inv = db.query(Investigation).options(
+        joinedload(Investigation.tasks),
+        joinedload(Investigation.evidence),
+        joinedload(Investigation.hypotheses),
+        joinedload(Investigation.root_causes),
+        joinedload(Investigation.proposed_fixes),
+    ).filter(
         Investigation.organization_id == org.id,
         Investigation.id == investigation_id,
     ).first()

@@ -1,6 +1,7 @@
 """Hypothesis engine — generates competing hypotheses, critiques them, identifies root cause."""
 import hashlib
 import json
+import re
 import asyncio
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field

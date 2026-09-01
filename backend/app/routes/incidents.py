@@ -274,7 +274,6 @@ def delete_incident(
         db.execute(text("DELETE FROM audit_events WHERE incident_id = :iid"), {"iid": inc_id})
         db.execute(text("DELETE FROM repository_scopes WHERE incident_id = :iid"), {"iid": inc_id})
         db.execute(text("DELETE FROM incident_signals WHERE incident_id = :iid"), {"iid": inc_id})
-        db.execute(text("DELETE FROM deployments WHERE incident_id = :iid"), {"iid": inc_id})
         db.execute(text("DELETE FROM incidents WHERE id = :iid"), {"iid": inc_id})
         db.commit()
     except Exception as e:

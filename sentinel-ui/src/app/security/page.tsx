@@ -266,7 +266,11 @@ export default function SecurityIncidentCommandPage() {
 
   return (
     <div className="min-h-screen bg-[#0a0d14] text-zinc-100 flex flex-col font-sans">
-      <TopBar />
+      <TopBar
+        title="Security Command"
+        subtitle="Forensic quarantine, dual sign-off containment, and cryptographic audit"
+        breadcrumbs={[{ label: "Security", active: true }]}
+      />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-8 space-y-6">
         {/* Toast Notification */}

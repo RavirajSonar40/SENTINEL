@@ -707,13 +707,13 @@ export default function InvestigationDetail() {
                 </div>
               )}
 
-              {incident.repositories.length > 0 && (
+              {(incident.repositories || []).length > 0 && (
                 <div className="mt-4 pt-3 border-t border-outline-variant/50">
                   <h3 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant mb-2">
                     Repository Scope
                   </h3>
                   <div className="font-mono text-[11px] space-y-1">
-                    {incident.repositories.map((repo) => (
+                    {(incident.repositories || []).map((repo) => (
                       <div key={repo.id} className="text-primary">{repo.full_name}</div>
                     ))}
                   </div>

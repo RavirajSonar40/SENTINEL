@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
 import { useAuth } from "@/lib/AuthContext";
 import {
@@ -138,10 +137,8 @@ export default function DeploymentsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex">
-      <Sidebar />
-      <div className="flex-1 ml-[220px] flex flex-col min-w-0">
-        <TopBar title="Deployments" subtitle="Release ledger & lifecycle inventory" />
+    <>
+      <TopBar title="Deployments" subtitle="Release ledger & lifecycle inventory" breadcrumbs={[{ label: "Deployments", active: true }]} />
 
         <main className="p-8 space-y-8 max-w-7xl mx-auto w-full">
           {/* Top Title & Header Actions */}
@@ -411,7 +408,6 @@ export default function DeploymentsPage() {
             )}
           </div>
         </main>
-      </div>
 
       {/* Modals */}
       {inspectDeployment && (
@@ -445,6 +441,6 @@ export default function DeploymentsPage() {
           onClose={() => setShowWebhookModal(false)}
         />
       )}
-    </div>
+    </>
   );
 }

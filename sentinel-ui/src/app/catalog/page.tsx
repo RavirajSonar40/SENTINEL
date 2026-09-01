@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import {
@@ -28,6 +28,7 @@ export default function CatalogPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [tierFilter, setTierFilter] = useState("");
 
   // Modals
@@ -57,12 +58,18 @@ export default function CatalogPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const reload = () => setRefreshKey((k) => k + 1);
 
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   useEffect(() => {
     if (!token) return;
     Promise.all([
       getActiveOrg(token).catch(() => null),
       listMemberships(token).catch(() => []),
-      listServices(token, { search: search || undefined, tier: tierFilter || undefined }).catch(() => []),
+      listServices(token, { search: debouncedSearch || undefined, tier: tierFilter || undefined }).catch(() => []),
       listRepositories(token).catch(() => []),
       listEnvironments(token).catch(() => []),
       listRegions(token).catch(() => []),
@@ -84,7 +91,7 @@ export default function CatalogPage() {
       .finally(() => {
         setLoading(false);
       });
-  }, [token, search, tierFilter, refreshKey]);
+  }, [token, debouncedSearch, tierFilter, refreshKey]);
 
   const handleCreateService = async (e: React.FormEvent) => {
     e.preventDefault();

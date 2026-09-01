@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/AuthContext";
 import { listAuditLogs, AuditLog } from "@/lib/api";
 
@@ -94,7 +95,7 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
         svcs.filter((s: { service_name: string }) =>
           s.service_name.toLowerCase().includes(searchQuery.toLowerCase())
         ).slice(0, 3).forEach((s: { service_name: string }) => {
-          results.push({ title: s.service_name, href: `/health`, type: "Service" });
+          results.push({ title: s.service_name, href: `/services`, type: "Service" });
         });
         setSearchResults(results);
         if (!cancelled) setSearchLoading(false);
@@ -125,12 +126,12 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
                 <span key={i} className="flex items-center gap-3">
                   {i > 0 && <span className="text-outline-variant">/</span>}
                   {crumb.href ? (
-                    <a
+                    <Link
                       href={crumb.href}
                       className="text-[13px] text-on-surface-variant hover:text-primary cursor-pointer transition-colors"
                     >
                       {crumb.label}
-                    </a>
+                    </Link>
                   ) : (
                     <span
                       className={`text-[13px] cursor-pointer transition-colors ${
@@ -232,7 +233,7 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
           </button>
 
           {/* User */}
-          <a href="/profile" className="flex items-center gap-2 ml-2 pl-2 border-l border-outline-variant hover:opacity-80 transition-opacity cursor-pointer">
+          <Link href="/profile" className="flex items-center gap-2 ml-2 pl-2 border-l border-outline-variant hover:opacity-80 transition-opacity cursor-pointer">
             <div className="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-[12px] font-bold text-on-primary-container">
               {username?.charAt(0).toUpperCase() || "A"}
             </div>
@@ -240,7 +241,7 @@ export default function TopBar({ breadcrumbs = [], title, subtitle, actions }: T
               <span className="text-[12px] font-medium text-on-surface leading-tight">{username || "Admin"}</span>
               <span className="text-[10px] text-on-surface-variant leading-tight">Admin</span>
             </div>
-          </a>
+          </Link>
         </div>
       </header>
 

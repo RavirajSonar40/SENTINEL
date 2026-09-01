@@ -2,8 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useAuth } from "@/lib/AuthContext";
-
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+import { sendChatMessage } from "@/lib/api";
 
 interface Message {
   role: "user" | "assistant";
@@ -120,17 +119,7 @@ export default function ChatBot() {
 
     try {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
-      const res = await fetch(`${API_BASE}/chat`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ message: userMsg, history }),
-      });
-
-      if (!res.ok) throw new Error("Failed to get response");
-      const data = await res.json();
+      const data = await sendChatMessage(token, userMsg, history);
       setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
     } catch {
       setMessages((prev) => [
@@ -152,18 +141,8 @@ export default function ChatBot() {
   const handleQuickAction = (message: string) => {
     setMessages((prev) => [...prev, { role: "user", content: message }]);
     setLoading(true);
-    fetch(`${API_BASE}/chat`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        message,
-        history: messages.map((m) => ({ role: m.role, content: m.content })),
-      }),
-    })
-      .then((r) => r.json())
+    const history = messages.map((m) => ({ role: m.role, content: m.content }));
+    sendChatMessage(token || "", message, history)
       .then((data) => {
         setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
       })

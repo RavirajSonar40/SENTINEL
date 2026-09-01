@@ -9,6 +9,19 @@ interface SystemStatus {
   vectorStore: string;
   aiModel: string;
   uptime: string;
+  startedAt: number;
+}
+
+const APP_START = Date.now();
+
+function formatUptime(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return `${days}d ${hours % 24}h`;
+  if (hours > 0) return `${hours}h ${minutes % 60}m`;
+  return `${minutes}m ${seconds % 60}s`;
 }
 
 export default function Footer() {
@@ -17,6 +30,7 @@ export default function Footer() {
     vectorStore: "Unknown",
     aiModel: "Unknown",
     uptime: "—",
+    startedAt: APP_START,
   });
 
   useEffect(() => {
@@ -35,10 +49,19 @@ export default function Footer() {
             ? "Connected"
             : "Unavailable",
           aiModel: checks.llm?.model || checks.llm?.provider || "Unknown",
-          uptime: "—",
+          uptime: formatUptime(Date.now() - APP_START),
+          startedAt: APP_START,
         });
       })
       .catch(() => {});
+  }, []);
+
+  // Update uptime every 10 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setStatus((prev) => ({ ...prev, uptime: formatUptime(Date.now() - APP_START) }));
+    }, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   return (

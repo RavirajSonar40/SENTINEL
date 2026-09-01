@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import TopBar from "@/components/TopBar";
 import {
   monitoringApi,
   TelemetrySignal,
@@ -177,7 +178,13 @@ export default function MonitoringPage() {
   });
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <>
+      <TopBar
+        title="Monitoring & Signals"
+        subtitle="Real-time anomaly ingestion, detection rules, and automated incident correlation"
+        breadcrumbs={[{ label: "Monitoring", active: true }]}
+      />
+      <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -703,5 +710,6 @@ export default function MonitoringPage() {
         </div>
       )}
     </div>
+    </>
   );
 }

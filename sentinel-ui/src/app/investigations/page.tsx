@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import { useAuth } from "@/lib/AuthContext";
@@ -56,6 +56,7 @@ export default function InvestigationsPage() {
   const [loading, setLoading] = useState(true);
   const [workflowFilter, setWorkflowFilter] = useState("all");
   const [activeStreamLogs, setActiveStreamLogs] = useState<Record<string, WorkflowStreamEvent[]>>({});
+  const streamCleanups = useRef<Record<string, () => void>>({});
 
   useEffect(() => {
     if (!token) return;
@@ -64,6 +65,13 @@ export default function InvestigationsPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [token]);
+
+  // Cleanup SSE streams on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(streamCleanups.current).forEach((cleanup) => cleanup());
+    };
+  }, []);
 
   const investigated = incidents.filter((i) => i.investigation);
   const filtered = workflowFilter === "all"
@@ -79,12 +87,13 @@ export default function InvestigationsPage() {
 
       // Connect to live SSE stream
       const ticket = await getStreamTicket(invId, token);
-      subscribeInvestigationStream(invId, ticket, (ev) => {
+      const cleanup = subscribeInvestigationStream(invId, ticket, (ev) => {
         setActiveStreamLogs((prev) => ({
           ...prev,
           [invId]: [...(prev[invId] || []), ev],
         }));
       });
+      streamCleanups.current[invId] = cleanup;
     } catch (err) {
       console.error("Failed to start workflow:", err);
     }

@@ -165,6 +165,7 @@ def run_isolated_validation_pipeline(
         # STAGE 2: Ephemeral Sandbox Workspace Provisioning
         # ---------------------------------------------------------------------
         # Populate repository base files into temp workspace
+        populated = False
         if repo and getattr(repo, "local_path", None) and os.path.exists(repo.local_path):
             for item in os.listdir(repo.local_path):
                 if item in [".git", "node_modules", "venv", ".venv", "__pycache__", ".pytest_cache"]:
@@ -175,6 +176,34 @@ def run_isolated_validation_pipeline(
                     shutil.copytree(s, d, symlinks=False)
                 else:
                     shutil.copy2(s, d)
+            populated = True
+
+        # Fallback: clone from GitHub if no local_path or repo not found
+        if not populated and fix.repository:
+            try:
+                import subprocess
+                clone_url = f"https://github.com/{fix.repository}.git"
+                # Try to use user's GitHub token for private repos
+                user_token = None
+                try:
+                    from app.services.investigation_engine import _get_user_github_token
+                    user_token = _get_user_github_token(None, db, fix.repository)
+                except Exception:
+                    pass
+                if user_token:
+                    # Insert token into URL for authenticated clone
+                    clone_url = f"https://{user_token}@github.com/{fix.repository}.git"
+                result = subprocess.run(
+                    ["git", "clone", "--depth=1", clone_url, "."],
+                    capture_output=True, text=True, timeout=30, cwd=temp_dir
+                )
+                if result.returncode == 0:
+                    populated = True
+                    logger.info(f"Cloned {fix.repository} into workspace for validation")
+                else:
+                    logger.warning(f"Git clone failed: {result.stderr}")
+            except Exception as e:
+                logger.warning(f"Could not clone repo for validation: {e}")
 
         # Execute and record Stage 1 verification
         is_git_ok, verified_sha, git_err = verify_git_base_commit(temp_dir, base_sha)

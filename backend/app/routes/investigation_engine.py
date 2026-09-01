@@ -260,6 +260,7 @@ async def trigger_investigation(
                     description=fix.get("description", ""),
                     proposed_change=fix.get("description", ""),
                     repository=state.repository,
+                    base_commit_sha=investigation.base_commit_sha,
                     diff=format_patch_for_pr(patch),
                     patch_json=patch,
                     status=FixStatus.APPROVED.value,

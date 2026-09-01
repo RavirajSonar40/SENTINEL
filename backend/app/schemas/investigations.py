@@ -171,6 +171,7 @@ class InvestigationDetailResponse(BaseModel):
     abstention_reason: Optional[str] = None
     security_case_id: Optional[str] = None
     confidence: Optional[Confidence] = None
+    base_commit_sha: Optional[str] = None
 
     llm_model: Optional[str] = None
     total_tokens: int = 0

@@ -269,6 +269,15 @@ def run_pending_migrations(current_user: User = Depends(get_current_user), db: S
             AND r.installation_id = gi.id
             AND r.owner_id IS NOT NULL;
         """))
+        # Final fallback: if only one user and one installation, link them
+        db.execute(text("""
+            UPDATE github_installations gi
+            SET user_id = u.id
+            FROM users u
+            WHERE gi.user_id IS NULL
+            AND (SELECT COUNT(*) FROM users) = 1
+            AND (SELECT COUNT(*) FROM github_installations) = 1;
+        """))
         db.commit()
         results.append({"migration": "037_add_user_id", "status": "applied"})
     except Exception as e:

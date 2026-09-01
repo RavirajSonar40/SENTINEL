@@ -66,7 +66,7 @@ export default function Logo({
       {showWordmark && (
         <div className="flex flex-col">
           <span className={`${cfg.title} text-on-surface leading-tight`}>
-            SENTINEL
+            RAVIRAJ SENTINEL
           </span>
           {subtitle && (
             <span className={`${cfg.subtitle} text-on-surface-variant leading-tight`}>

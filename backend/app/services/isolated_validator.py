@@ -161,6 +161,14 @@ def run_isolated_validation_pipeline(
     scenario_status = "n/a"
 
     try:
+        # Extract patch changes early (needed for Stage 2 file fetching)
+        if isinstance(fix.patch_json, dict):
+            patch_changes = fix.patch_json.get("changes", [])
+        elif isinstance(fix.patch_json, list):
+            patch_changes = fix.patch_json
+        else:
+            patch_changes = []
+
         # ---------------------------------------------------------------------
         # STAGE 2: Ephemeral Sandbox Workspace Provisioning
         # ---------------------------------------------------------------------
@@ -182,46 +190,49 @@ def run_isolated_validation_pipeline(
         if not populated and fix.repository:
             try:
                 import httpx
-                user_token = None
-                try:
-                    from app.services.investigation_engine import _get_user_github_token
-                    user_token = _get_user_github_token(None, db, fix.repository)
-                except Exception:
-                    pass
 
-                if user_token:
-                    owner, repo_name_str = fix.repository.split("/", 1)
+                # Fetch only the files that the patch touches
+                files_to_fetch = set()
+                for change in patch_changes:
+                    f = change.get("file", "")
+                    if f:
+                        files_to_fetch.add(f)
 
-                    # Fetch only the files that the patch touches
-                    files_to_fetch = set()
-                    for change in patch_changes:
-                        f = change.get("file", "")
-                        if f:
-                            files_to_fetch.add(f)
+                for file_path in files_to_fetch:
+                    # Try without auth first (public repos), then with token
+                    url = f"https://api.github.com/repos/{fix.repository}/contents/{file_path}?ref={base_sha}"
+                    resp = httpx.get(url, headers={"Accept": "application/vnd.github.v3+json"}, timeout=15)
+                    if resp.status_code != 200:
+                        # Try with token for private repos
+                        user_token = None
+                        try:
+                            from app.services.investigation_engine import _get_user_github_token
+                            user_token = _get_user_github_token(None, db, fix.repository)
+                        except Exception:
+                            pass
+                        if user_token:
+                            resp = httpx.get(url, headers={"Authorization": f"token {user_token}", "Accept": "application/vnd.github.v3+json"}, timeout=15)
 
-                    for file_path in files_to_fetch:
-                        url = f"https://api.github.com/repos/{fix.repository}/contents/{file_path}?ref={base_sha}"
-                        resp = httpx.get(url, headers={"Authorization": f"token {user_token}", "Accept": "application/vnd.github.v3+json"}, timeout=15)
-                        if resp.status_code == 200:
-                            import base64
-                            content = base64.b64decode(resp.json()["content"]).decode("utf-8")
-                            full_path = os.path.join(temp_dir, file_path)
-                            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                            with open(full_path, "w", encoding="utf-8") as f:
-                                f.write(content)
-                            populated = True
-                            logger.info(f"Fetched {file_path} from GitHub API for validation")
-                        else:
-                            logger.warning(f"Could not fetch {file_path} from GitHub: {resp.status_code}")
+                    if resp.status_code == 200:
+                        import base64
+                        content = base64.b64decode(resp.json()["content"]).decode("utf-8")
+                        full_path = os.path.join(temp_dir, file_path)
+                        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                        with open(full_path, "w", encoding="utf-8") as f:
+                            f.write(content)
+                        populated = True
+                        logger.info(f"Fetched {file_path} from GitHub API for validation")
+                    else:
+                        logger.warning(f"Could not fetch {file_path} from GitHub: {resp.status_code}")
 
-                    # Also init git repo so Stage 1 verification can work
-                    if populated:
-                        import subprocess
-                        subprocess.run(["git", "init"], capture_output=True, cwd=temp_dir, timeout=5)
-                        subprocess.run(["git", "config", "user.email", "sentinel@bot.com"], capture_output=True, cwd=temp_dir, timeout=5)
-                        subprocess.run(["git", "config", "user.name", "Sentinel"], capture_output=True, cwd=temp_dir, timeout=5)
-                        subprocess.run(["git", "add", "."], capture_output=True, cwd=temp_dir, timeout=10)
-                        subprocess.run(["git", "commit", "-m", "base", "--allow-empty"], capture_output=True, cwd=temp_dir, timeout=10)
+                # Init git repo so Stage 1 verification can work
+                if populated:
+                    import subprocess
+                    subprocess.run(["git", "init"], capture_output=True, cwd=temp_dir, timeout=5)
+                    subprocess.run(["git", "config", "user.email", "sentinel@bot.com"], capture_output=True, cwd=temp_dir, timeout=5)
+                    subprocess.run(["git", "config", "user.name", "Sentinel"], capture_output=True, cwd=temp_dir, timeout=5)
+                    subprocess.run(["git", "add", "."], capture_output=True, cwd=temp_dir, timeout=10)
+                    subprocess.run(["git", "commit", "-m", "base"], capture_output=True, cwd=temp_dir, timeout=10)
             except Exception as e:
                 logger.warning(f"Could not fetch files from GitHub for validation: {e}")
 
@@ -251,12 +262,6 @@ def run_isolated_validation_pipeline(
         # ---------------------------------------------------------------------
         # STAGE 3: AST Syntax & Strict Compilation Check
         # ---------------------------------------------------------------------
-        if isinstance(fix.patch_json, dict):
-            patch_changes = fix.patch_json.get("changes", [])
-        elif isinstance(fix.patch_json, list):
-            patch_changes = fix.patch_json
-        else:
-            patch_changes = []
         for change in patch_changes:
             file_name = change.get("file", "")
             new_code = change.get("new_code", "")

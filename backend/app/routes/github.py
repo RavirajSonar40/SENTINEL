@@ -301,7 +301,9 @@ def github_status(
     db: Session = Depends(get_db),
 ):
     """Check GitHub connection status."""
-    installations = db.query(GitHubInstallation).all()
+    installations = db.query(GitHubInstallation).filter(
+        GitHubInstallation.user_id == current_user.id,
+    ).all()
     repos = db.query(Repository).filter(Repository.owner_id == current_user.id).all()
     return {
         "configured": bool(GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET),
@@ -394,7 +396,9 @@ def list_installations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    installs = db.query(GitHubInstallation).all()
+    installs = db.query(GitHubInstallation).filter(
+        GitHubInstallation.user_id == current_user.id,
+    ).all()
     return [
         {
             "id": str(i.id),
@@ -402,6 +406,7 @@ def list_installations(
             "account_login": i.account_login,
             "account_type": i.account_type,
             "repository_selection": i.repository_selection,
+            "user_id": str(i.user_id) if i.user_id else None,
             "created_at": i.created_at.isoformat() if i.created_at else None,
         }
         for i in installs

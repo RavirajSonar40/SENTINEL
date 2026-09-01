@@ -369,6 +369,12 @@ async def _stream_investigation(
         except Exception:
             tasks = _generate_default_tasks(state)
 
+        # Inject GitHub token into task parameters
+        if github_token:
+            for task in tasks:
+                if task.tool_name in ("read_file", "get_git_history", "get_diff", "search_code"):
+                    task.parameters["_github_token"] = github_token
+
         task_descriptions = [t.description for t in tasks]
         yield emit("step", {
             "step": "llm_planning",
@@ -402,7 +408,7 @@ async def _stream_investigation(
                     task_type=task.task_type,
                     description=task.description,
                     tool_name=task.tool_name,
-                    parameters={**task.parameters, "repository": repository},
+                    parameters={**task.parameters, "repository": repository, **({"_github_token": github_token} if github_token else {})},
                 )
             )
             for task, repository in search_pairs

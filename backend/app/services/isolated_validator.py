@@ -206,8 +206,8 @@ def run_isolated_validation_pipeline(
                         # Try with token for private repos
                         user_token = None
                         try:
-                            from app.services.investigation_engine import _get_user_github_token
-                            user_token = _get_user_github_token(None, db, fix.repository)
+                            from app.core.github import resolve_github_token
+                            user_token = resolve_github_token(db=db, repository=fix.repository)
                         except Exception:
                             pass
                         if user_token:

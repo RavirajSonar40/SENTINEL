@@ -293,9 +293,8 @@ async def publish_draft_pr(
     if installation and installation.tokens_encrypted:
         gh_token = installation.tokens_encrypted
     if not gh_token:
-        from app.core.config import settings
-        import os
-        gh_token = settings.GITHUB_TOKEN or os.getenv("GITHUB_TOKEN")
+        from app.core.github import resolve_github_token
+        gh_token = resolve_github_token(db=db, repository=repository_name)
 
     if not gh_token:
         raise HTTPException(400, f"No GitHub write token is available for {repository_name}")
@@ -554,14 +553,20 @@ async def generate_draft_pr(
         GitHubInstallation.id == repository.installation_id
     ).first()
     if not installation or not installation.tokens_encrypted:
-        raise HTTPException(status_code=400, detail=f"No GitHub write token is available for {repository_name}")
+        from app.core.github import resolve_github_token
+        fallback_token = resolve_github_token(db=db, repository=repository_name)
+        if not fallback_token:
+            raise HTTPException(status_code=400, detail=f"No GitHub write token is available for {repository_name}")
+        installation_tokens = fallback_token
+    else:
+        installation_tokens = installation.tokens_encrypted
 
     # 8. Base SHA freshness check: verify the base branch HEAD matches or is close to expected
     base_branch = repository.default_branch or "main"
     try:
         from app.services.github import GitHubClient
         from app.core.config import settings
-        gh = GitHubClient(token=installation.tokens_encrypted or settings.GITHUB_TOKEN)
+        gh = GitHubClient(token=installation_tokens)
         owner, repo_name = repository_name.split("/", 1)
         branch_info = await gh.get_branch(owner, repo_name, base_branch)
         remote_sha = branch_info.get("commit", {}).get("sha", "")

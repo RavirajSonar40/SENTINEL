@@ -232,23 +232,8 @@ async def index_repository(
         files = _scan_directory(request.local_path)
     elif request.repository and "/" in request.repository:
         # Index from GitHub repository — get user's token with fallback
-        import logging
-        from app.core.config import settings
-        _logger = logging.getLogger("sentinel.indexing")
-        from app.models.incident import GitHubInstallation, Repository as RepoModel
-        repo_owner = request.repository.split("/")[0]
-        _logger.info(f"Looking up GitHub installation for owner={repo_owner}")
-        installation = db.query(GitHubInstallation).filter(
-            GitHubInstallation.account_login == repo_owner,
-        ).first()
-        if installation and installation.tokens_encrypted:
-            user_token = installation.tokens_encrypted
-            _logger.info(f"Found installation for {repo_owner}")
-        else:
-            all_inst = db.query(GitHubInstallation).order_by(GitHubInstallation.updated_at.desc()).all()
-            user_token = all_inst[0].tokens_encrypted if all_inst and all_inst[0].tokens_encrypted else None
-
-        user_token = user_token or settings.GITHUB_TOKEN or os.getenv("GITHUB_TOKEN")
+        from app.core.github import resolve_github_token
+        user_token = resolve_github_token(user=current_user, db=db, repository=request.repository, organization_id=getattr(current_user, 'organization_id', None))
 
         # Get default branch if known
         repo_record = db.query(RepoModel).filter(RepoModel.full_name == request.repository).first()

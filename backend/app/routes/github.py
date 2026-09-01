@@ -82,15 +82,17 @@ async def connect_with_token(
         ))
         db.flush()
 
-    # Store as installation
+    # Store as installation (scoped to this user)
     existing = db.query(GitHubInstallation).filter(
-        GitHubInstallation.account_login == github_login
+        GitHubInstallation.user_id == current_user.id,
+        GitHubInstallation.account_login == github_login,
     ).first()
     if existing:
         existing.tokens_encrypted = token
         existing.updated_at = func.now()
     else:
         inst_record = GitHubInstallation(
+            user_id=current_user.id,
             installation_id=str(user_data["id"]),
             account_type=user_data.get("type", "User"),
             account_login=github_login,
@@ -151,9 +153,11 @@ async def sync_repos_token(
     current_user: User = Depends(get_current_user),
 ):
     """Sync repos using stored PAT."""
-    installation = db.query(GitHubInstallation).first()
+    installation = db.query(GitHubInstallation).filter(
+        GitHubInstallation.user_id == current_user.id,
+    ).first()
     if not installation:
-        raise HTTPException(404, "No GitHub connection found")
+        raise HTTPException(404, "No GitHub connection found for this user")
 
     token = installation.tokens_encrypted
     github = GitHubClient(token)

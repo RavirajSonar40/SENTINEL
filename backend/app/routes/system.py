@@ -224,3 +224,37 @@ def get_system_health(current_user: User = Depends(get_current_user)):
         "status": "healthy" if all(c.get("status") in ("operational", "configured") for c in checks.values()) else "degraded",
         "checks": checks,
     }
+
+
+# --- Database Migrations (run-once endpoints) ---
+
+@router.post("/admin/migrate")
+def run_pending_migrations(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Run pending schema migrations. One-time use per migration."""
+    from sqlalchemy import text
+    results = []
+
+    # Migration 037: Add user_id to github_installations
+    try:
+        db.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'github_installations' AND column_name = 'user_id'
+                ) THEN
+                    ALTER TABLE github_installations ADD COLUMN user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+                    CREATE INDEX ix_github_installations_user_id ON github_installations(user_id);
+                    RAISE NOTICE 'Added user_id column to github_installations';
+                ELSE
+                    RAISE NOTICE 'user_id column already exists';
+                END IF;
+            END $$;
+        """))
+        db.commit()
+        results.append({"migration": "037_add_user_id", "status": "applied"})
+    except Exception as e:
+        db.rollback()
+        results.append({"migration": "037_add_user_id", "status": "error", "error": str(e)})
+
+    return {"results": results}

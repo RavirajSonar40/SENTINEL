@@ -520,6 +520,7 @@ class User(Base):
     incidents = relationship("Incident", back_populates="creator")
     approvals = relationship("Approval", back_populates="user")
     service_ownerships = relationship("ServiceOwnership", back_populates="user")
+    github_installations = relationship("GitHubInstallation", back_populates="user", foreign_keys="GitHubInstallation.user_id")
 
 
 class Organization(Base):
@@ -2235,6 +2236,7 @@ class GitHubInstallation(Base):
     __tablename__ = "github_installations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     installation_id = Column(String(100), unique=True, nullable=False)
     account_type = Column(String(50), nullable=False)
     account_login = Column(String(255), nullable=False)
@@ -2246,6 +2248,7 @@ class GitHubInstallation(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    user = relationship("User", back_populates="github_installations", foreign_keys=[user_id])
     repositories = relationship("Repository", back_populates="installation")
 
 

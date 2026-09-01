@@ -12,6 +12,8 @@ from app.models.incident import (
     Incident, IncidentStatus, IncidentSeverity, IncidentSource,
     Repository, RepositoryScope, User, Service,
     Investigation, Evidence, Hypothesis, RootCause, ProposedFix, AuditEvent,
+    FixFile, ValidationRun, ValidationCheckRun, Approval, ApprovalDecision,
+    Deployment, IncidentSignal, AgentRun,
 )
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -236,17 +238,40 @@ def delete_incident(
     if current_user.role != "admin" and incident.creator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # Cascade delete related records
+    # Cascade delete all related records
+    # 1. Investigations and their children
     investigations = db.query(Investigation).filter(Investigation.incident_id == incident.id).all()
     for inv in investigations:
         db.query(Evidence).filter(Evidence.investigation_id == inv.id).delete()
         db.query(Hypothesis).filter(Hypothesis.investigation_id == inv.id).delete()
         db.query(RootCause).filter(RootCause.investigation_id == inv.id).delete()
-        db.query(ProposedFix).filter(ProposedFix.investigation_id == inv.id).delete()
+        db.query(AgentRun).filter(AgentRun.investigation_id == inv.id).delete()
+        # Proposed fixes and their children
+        fixes = db.query(ProposedFix).filter(ProposedFix.investigation_id == inv.id).all()
+        for fix in fixes:
+            db.query(FixFile).filter(FixFile.fix_id == fix.id).delete()
+            for vr in db.query(ValidationRun).filter(ValidationRun.fix_id == fix.id).all():
+                db.query(ValidationCheckRun).filter(ValidationCheckRun.validation_run_id == vr.id).delete()
+                db.delete(vr)
+            db.query(Approval).filter(Approval.fix_id == fix.id).delete()
+            db.delete(fix)
         db.delete(inv)
 
-    db.query(ProposedFix).filter(ProposedFix.incident_id == incident.id).delete()
+    # 2. Direct fix children
+    fixes = db.query(ProposedFix).filter(ProposedFix.incident_id == incident.id).all()
+    for fix in fixes:
+        db.query(FixFile).filter(FixFile.fix_id == fix.id).delete()
+        for vr in db.query(ValidationRun).filter(ValidationRun.fix_id == fix.id).all():
+            db.query(ValidationCheckRun).filter(ValidationCheckRun.validation_run_id == vr.id).delete()
+            db.delete(vr)
+        db.query(Approval).filter(Approval.fix_id == fix.id).delete()
+        db.delete(fix)
+
+    # 3. Other related records
     db.query(AuditEvent).filter(AuditEvent.incident_id == incident.id).delete()
+    db.query(RepositoryScope).filter(RepositoryScope.incident_id == incident.id).delete()
+    db.query(Deployment).filter(Deployment.incident_id == incident.id).delete()
+    db.query(IncidentSignal).filter(IncidentSignal.incident_id == incident.id).delete()
 
     db.delete(incident)
     db.commit()

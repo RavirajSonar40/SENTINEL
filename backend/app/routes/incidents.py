@@ -236,6 +236,18 @@ def delete_incident(
     if current_user.role != "admin" and incident.creator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
+    # Cascade delete related records
+    investigations = db.query(Investigation).filter(Investigation.incident_id == incident.id).all()
+    for inv in investigations:
+        db.query(Evidence).filter(Evidence.investigation_id == inv.id).delete()
+        db.query(Hypothesis).filter(Hypothesis.investigation_id == inv.id).delete()
+        db.query(RootCause).filter(RootCause.investigation_id == inv.id).delete()
+        db.query(ProposedFix).filter(ProposedFix.investigation_id == inv.id).delete()
+        db.delete(inv)
+
+    db.query(ProposedFix).filter(ProposedFix.incident_id == incident.id).delete()
+    db.query(AuditEvent).filter(AuditEvent.incident_id == incident.id).delete()
+
     db.delete(incident)
     db.commit()
 

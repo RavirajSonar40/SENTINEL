@@ -178,32 +178,52 @@ def run_isolated_validation_pipeline(
                     shutil.copy2(s, d)
             populated = True
 
-        # Fallback: clone from GitHub if no local_path or repo not found
+        # Fallback: fetch files from GitHub API if no local_path
         if not populated and fix.repository:
             try:
-                import subprocess
-                clone_url = f"https://github.com/{fix.repository}.git"
-                # Try to use user's GitHub token for private repos
+                import httpx
                 user_token = None
                 try:
                     from app.services.investigation_engine import _get_user_github_token
                     user_token = _get_user_github_token(None, db, fix.repository)
                 except Exception:
                     pass
+
                 if user_token:
-                    # Insert token into URL for authenticated clone
-                    clone_url = f"https://{user_token}@github.com/{fix.repository}.git"
-                result = subprocess.run(
-                    ["git", "clone", "--depth=1", clone_url, "."],
-                    capture_output=True, text=True, timeout=30, cwd=temp_dir
-                )
-                if result.returncode == 0:
-                    populated = True
-                    logger.info(f"Cloned {fix.repository} into workspace for validation")
-                else:
-                    logger.warning(f"Git clone failed: {result.stderr}")
+                    owner, repo_name_str = fix.repository.split("/", 1)
+
+                    # Fetch only the files that the patch touches
+                    files_to_fetch = set()
+                    for change in patch_changes:
+                        f = change.get("file", "")
+                        if f:
+                            files_to_fetch.add(f)
+
+                    for file_path in files_to_fetch:
+                        url = f"https://api.github.com/repos/{fix.repository}/contents/{file_path}?ref={base_sha}"
+                        resp = httpx.get(url, headers={"Authorization": f"token {user_token}", "Accept": "application/vnd.github.v3+json"}, timeout=15)
+                        if resp.status_code == 200:
+                            import base64
+                            content = base64.b64decode(resp.json()["content"]).decode("utf-8")
+                            full_path = os.path.join(temp_dir, file_path)
+                            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                            with open(full_path, "w", encoding="utf-8") as f:
+                                f.write(content)
+                            populated = True
+                            logger.info(f"Fetched {file_path} from GitHub API for validation")
+                        else:
+                            logger.warning(f"Could not fetch {file_path} from GitHub: {resp.status_code}")
+
+                    # Also init git repo so Stage 1 verification can work
+                    if populated:
+                        import subprocess
+                        subprocess.run(["git", "init"], capture_output=True, cwd=temp_dir, timeout=5)
+                        subprocess.run(["git", "config", "user.email", "sentinel@bot.com"], capture_output=True, cwd=temp_dir, timeout=5)
+                        subprocess.run(["git", "config", "user.name", "Sentinel"], capture_output=True, cwd=temp_dir, timeout=5)
+                        subprocess.run(["git", "add", "."], capture_output=True, cwd=temp_dir, timeout=10)
+                        subprocess.run(["git", "commit", "-m", "base", "--allow-empty"], capture_output=True, cwd=temp_dir, timeout=10)
             except Exception as e:
-                logger.warning(f"Could not clone repo for validation: {e}")
+                logger.warning(f"Could not fetch files from GitHub for validation: {e}")
 
         # Execute and record Stage 1 verification
         is_git_ok, verified_sha, git_err = verify_git_base_commit(temp_dir, base_sha)

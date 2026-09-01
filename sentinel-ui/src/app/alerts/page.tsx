@@ -16,23 +16,29 @@ export default function AlertsPage() {
   const { token } = useAuth();
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
     listAlertRules(token)
-      .then((data) => setRules(Array.isArray(data) ? data : (data as { rules?: AlertRule[] })?.rules || []))
-      .catch(() => setRules([]))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : Array.isArray((data as any)?.rules) ? (data as any).rules : [];
+        setRules(list);
+      })
+      .catch((err) => {
+        console.error("Failed to load alert rules:", err);
+        setError(err instanceof Error ? err.message : "Failed to load alert rules");
+        setRules([]);
+      })
       .finally(() => setLoading(false));
   }, [token]);
 
   const handleToggle = async (id: string) => {
     if (!token) return;
-    // Optimistic update
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
     try {
       await toggleAlertRule(token, id);
     } catch {
-      // Revert on failure
       setRules((prev) => prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
     }
   };
@@ -48,7 +54,6 @@ export default function AlertsPage() {
       />
       <main className="flex-1 p-6 pb-10">
         <div className="max-w-[1400px] mx-auto">
-          {/* Stats */}
           <div className="grid grid-cols-3 gap-4 mb-6">
             <div className="bg-surface-container-low border border-outline-variant rounded-lg p-4">
               <div className="text-[11px] text-on-surface-variant uppercase tracking-wider mb-1">Total Rules</div>
@@ -64,13 +69,23 @@ export default function AlertsPage() {
             </div>
           </div>
 
-          {/* Rules Table */}
           <div className="bg-surface-container-low border border-outline-variant rounded">
             <div className="p-4 border-b border-outline-variant">
               <h2 className="text-[13px] font-semibold text-on-surface">Detection Rules</h2>
             </div>
             {loading ? (
               <div className="p-8 text-center text-on-surface-variant text-[12px] font-mono">Loading...</div>
+            ) : error ? (
+              <div className="p-8 text-center">
+                <div className="text-[13px] text-error mb-2">Unable to load detection rules</div>
+                <div className="text-[11px] text-on-surface-variant font-mono">{error}</div>
+                <button
+                  onClick={() => { setError(null); setLoading(true); listAlertRules(token || "").then((d) => { setRules(Array.isArray(d) ? d : []); }).catch((e) => setError(e.message)).finally(() => setLoading(false)); }}
+                  className="mt-4 px-4 py-1.5 bg-primary text-on-primary text-[11px] rounded hover:opacity-90"
+                >
+                  Retry
+                </button>
+              </div>
             ) : rules.length === 0 ? (
               <div className="p-8 text-center text-on-surface-variant text-[12px]">No alert rules configured</div>
             ) : (
@@ -96,7 +111,7 @@ export default function AlertsPage() {
                           {rule.severity}
                         </span>
                       </td>
-                      <td className="py-2.5 px-4 text-on-surface-variant">{rule.services.join(", ")}</td>
+                      <td className="py-2.5 px-4 text-on-surface-variant">{Array.isArray(rule.services) ? rule.services.join(", ") : "all"}</td>
                       <td className="py-2.5 px-4">
                         <button
                           onClick={() => handleToggle(rule.id)}

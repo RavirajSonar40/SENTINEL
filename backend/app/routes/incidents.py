@@ -238,43 +238,44 @@ def delete_incident(
     if current_user.role != "admin" and incident.creator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # Cascade delete all related records
-    # 1. Investigations and their children
-    investigations = db.query(Investigation).filter(Investigation.incident_id == incident.id).all()
-    for inv in investigations:
-        db.query(Evidence).filter(Evidence.investigation_id == inv.id).delete()
-        db.query(Hypothesis).filter(Hypothesis.investigation_id == inv.id).delete()
-        db.query(RootCause).filter(RootCause.investigation_id == inv.id).delete()
-        db.query(AgentRun).filter(AgentRun.investigation_id == inv.id).delete()
-        # Proposed fixes and their children
-        fixes = db.query(ProposedFix).filter(ProposedFix.investigation_id == inv.id).all()
-        for fix in fixes:
-            db.query(FixFile).filter(FixFile.fix_id == fix.id).delete()
-            for vr in db.query(ValidationRun).filter(ValidationRun.fix_id == fix.id).all():
-                db.query(ValidationCheckRun).filter(ValidationCheckRun.validation_run_id == vr.id).delete()
-                db.delete(vr)
-            db.query(Approval).filter(Approval.fix_id == fix.id).delete()
-            db.delete(fix)
-        db.delete(inv)
+    # Use raw SQL cascade delete to avoid FK constraint issues
+    inc_id = str(incident.id)
+    try:
+        from sqlalchemy import text
+        # Get investigation IDs
+        inv_rows = db.execute(text("SELECT id FROM investigations WHERE incident_id = :iid"), {"iid": inc_id}).fetchall()
+        inv_ids = [str(r[0]) for r in inv_rows]
 
-    # 2. Direct fix children
-    fixes = db.query(ProposedFix).filter(ProposedFix.incident_id == incident.id).all()
-    for fix in fixes:
-        db.query(FixFile).filter(FixFile.fix_id == fix.id).delete()
-        for vr in db.query(ValidationRun).filter(ValidationRun.fix_id == fix.id).all():
-            db.query(ValidationCheckRun).filter(ValidationCheckRun.validation_run_id == vr.id).delete()
-            db.delete(vr)
-        db.query(Approval).filter(Approval.fix_id == fix.id).delete()
-        db.delete(fix)
+        for inv_id in inv_ids:
+            db.execute(text("DELETE FROM validation_check_runs WHERE validation_run_id IN (SELECT id FROM validation_runs WHERE fix_id IN (SELECT id FROM proposed_fixes WHERE investigation_id = :iid))"), {"iid": inv_id})
+            db.execute(text("DELETE FROM validation_runs WHERE fix_id IN (SELECT id FROM proposed_fixes WHERE investigation_id = :iid)"), {"iid": inv_id})
+            db.execute(text("DELETE FROM fix_files WHERE fix_id IN (SELECT id FROM proposed_fixes WHERE investigation_id = :iid)"), {"iid": inv_id})
+            db.execute(text("DELETE FROM approval_decisions WHERE approval_id IN (SELECT id FROM approvals WHERE fix_id IN (SELECT id FROM proposed_fixes WHERE investigation_id = :iid))"), {"iid": inv_id})
+            db.execute(text("DELETE FROM approvals WHERE fix_id IN (SELECT id FROM proposed_fixes WHERE investigation_id = :iid)"), {"iid": inv_id})
+            db.execute(text("DELETE FROM proposed_fixes WHERE investigation_id = :iid"), {"iid": inv_id})
+            db.execute(text("DELETE FROM root_causes WHERE investigation_id = :iid"), {"iid": inv_id})
+            db.execute(text("DELETE FROM hypotheses WHERE investigation_id = :iid"), {"iid": inv_id})
+            db.execute(text("DELETE FROM evidence WHERE investigation_id = :iid"), {"iid": inv_id})
+            db.execute(text("DELETE FROM agent_runs WHERE investigation_id = :iid"), {"iid": inv_id})
+            db.execute(text("DELETE FROM investigations WHERE id = :iid"), {"iid": inv_id})
 
-    # 3. Other related records
-    db.query(AuditEvent).filter(AuditEvent.incident_id == incident.id).delete()
-    db.query(RepositoryScope).filter(RepositoryScope.incident_id == incident.id).delete()
-    db.query(Deployment).filter(Deployment.incident_id == incident.id).delete()
-    db.query(IncidentSignal).filter(IncidentSignal.incident_id == incident.id).delete()
+        # Delete direct fix children
+        db.execute(text("DELETE FROM validation_check_runs WHERE validation_run_id IN (SELECT id FROM validation_runs WHERE fix_id IN (SELECT id FROM proposed_fixes WHERE incident_id = :iid))"), {"iid": inc_id})
+        db.execute(text("DELETE FROM validation_runs WHERE fix_id IN (SELECT id FROM proposed_fixes WHERE incident_id = :iid)"), {"iid": inc_id})
+        db.execute(text("DELETE FROM fix_files WHERE fix_id IN (SELECT id FROM proposed_fixes WHERE incident_id = :iid)"), {"iid": inc_id})
+        db.execute(text("DELETE FROM approval_decisions WHERE approval_id IN (SELECT id FROM approvals WHERE fix_id IN (SELECT id FROM proposed_fixes WHERE incident_id = :iid))"), {"iid": inc_id})
+        db.execute(text("DELETE FROM approvals WHERE fix_id IN (SELECT id FROM proposed_fixes WHERE incident_id = :iid)"), {"iid": inc_id})
+        db.execute(text("DELETE FROM proposed_fixes WHERE incident_id = :iid"), {"iid": inc_id})
 
-    db.delete(incident)
-    db.commit()
+        db.execute(text("DELETE FROM audit_events WHERE incident_id = :iid"), {"iid": inc_id})
+        db.execute(text("DELETE FROM repository_scopes WHERE incident_id = :iid"), {"iid": inc_id})
+        db.execute(text("DELETE FROM incident_signals WHERE incident_id = :iid"), {"iid": inc_id})
+        db.execute(text("DELETE FROM deployments WHERE incident_id = :iid"), {"iid": inc_id})
+        db.execute(text("DELETE FROM incidents WHERE id = :iid"), {"iid": inc_id})
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete incident: {str(e)}")
 
 @router.post("/{incident_id}/investigate")
 def start_investigation(

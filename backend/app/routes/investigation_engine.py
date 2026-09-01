@@ -169,16 +169,20 @@ async def trigger_investigation(
 
         # Auto-set base_commit_sha from latest commit if not set
         if not investigation.base_commit_sha and repo_name and user_token:
-            try:
-                from app.services.github import GitHubClient
-                gh = GitHubClient(token=user_token)
-                owner, repo = repo_name.split("/", 1)
-                branch_info = await gh.get_branch(owner, repo, "main")
-                remote_sha = branch_info.get("commit", {}).get("sha", "")
-                if remote_sha and len(remote_sha) >= 40:
-                    investigation.base_commit_sha = remote_sha[:40]
-            except Exception as e:
-                logger.warning(f"Could not auto-set base_commit_sha: {e}")
+            for branch_name in ["main", "master"]:
+                try:
+                    from app.services.github import GitHubClient
+                    gh = GitHubClient(token=user_token)
+                    owner, repo = repo_name.split("/", 1)
+                    branch_info = await gh.get_branch(owner, repo, branch_name)
+                    remote_sha = branch_info.get("commit", {}).get("sha", "")
+                    if remote_sha and len(remote_sha) >= 40:
+                        investigation.base_commit_sha = remote_sha[:40]
+                        logger.info(f"Auto-set base_commit_sha to {remote_sha[:40]} from branch {branch_name}")
+                        break
+                except Exception as e:
+                    logger.warning(f"Could not auto-set base_commit_sha from branch {branch_name}: {e}")
+                    continue
 
         # Persist evidence
         evidence_count = 0

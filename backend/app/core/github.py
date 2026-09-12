@@ -12,8 +12,25 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.crypto import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
+
+
+def encrypt_github_token(token: str) -> str:
+    """Encrypt a GitHub token before persisting it."""
+    return encrypt_secret(token)
+
+
+def resolve_stored_github_token(value: Optional[str]) -> Optional[str]:
+    """Decrypt a stored token, accepting legacy plaintext rows during migration."""
+    if not value:
+        return None
+    try:
+        return decrypt_secret(value)
+    except Exception:
+        logger.warning("Using a legacy plaintext GitHub token; rotate it to encrypt the stored value")
+        return value
 
 
 def resolve_github_token(
@@ -53,7 +70,7 @@ def resolve_github_token(
         ).order_by(GitHubInstallation.updated_at.desc()).first()
         if installation:
             logger.debug(f"Resolved token from user installation for user {user.id}")
-            return installation.tokens_encrypted
+            return resolve_stored_github_token(installation.tokens_encrypted)
 
     # Tier 2: Repo-owner-scoped installation
     if repository and "/" in repository:
@@ -65,7 +82,7 @@ def resolve_github_token(
         ).first()
         if installation:
             logger.debug(f"Resolved token from repo-owner installation for {repo_owner}")
-            return installation.tokens_encrypted
+            return resolve_stored_github_token(installation.tokens_encrypted)
 
     # Tier 3: Org-scoped installation
     if organization_id:
@@ -83,7 +100,7 @@ def resolve_github_token(
             ).first()
             if inst:
                 logger.debug(f"Resolved token from org installation for org {organization_id}")
-                return inst.tokens_encrypted
+                return resolve_stored_github_token(inst.tokens_encrypted)
 
     # Tier 4: Server-level fallback
     token = settings.GITHUB_TOKEN or os.getenv("GITHUB_TOKEN")

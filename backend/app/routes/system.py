@@ -1,13 +1,15 @@
 """Audit logs and settings routes."""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
-from app.models.incident import AuditEvent, User
+from app.core.permissions import require_admin
+from app.models.incident import AuditEvent, Incident, User, Organization, UserOrganizationMembership
 
 router = APIRouter(tags=["system"])
 
@@ -20,7 +22,24 @@ def list_audit_logs(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    logs = db.query(AuditEvent).order_by(AuditEvent.timestamp.desc()).limit(limit).all()
+    bounded_limit = max(1, min(limit, 200))
+    logs = (
+        db.query(AuditEvent)
+        .outerjoin(Incident, AuditEvent.incident_id == Incident.id)
+        .outerjoin(User, AuditEvent.user_id == User.id)
+        .filter(
+            or_(
+                Incident.organization_id == current_user.organization_id,
+                and_(
+                    AuditEvent.incident_id.is_(None),
+                    User.organization_id == current_user.organization_id,
+                ),
+            )
+        )
+        .order_by(AuditEvent.timestamp.desc())
+        .limit(bounded_limit)
+        .all()
+    )
     return [
         {
             "id": str(log.id),
@@ -47,18 +66,24 @@ class SettingsPayload(BaseModel):
 
 
 # In-memory settings store (production would use DB)
-_settings: Dict[str, Any] = {
+_default_settings: Dict[str, Any] = {
     "llm_provider": "mock",
     "llm_model": "gpt-4",
     "auto_investigate": True,
     "auto_merge": False,
     "notification_email": "",
 }
+_settings_by_org: Dict[str, Dict[str, Any]] = {}
+
+
+def _settings_for_user(current_user: User) -> Dict[str, Any]:
+    org_key = str(current_user.organization_id or current_user.id)
+    return _settings_by_org.setdefault(org_key, dict(_default_settings))
 
 
 @router.get("/settings")
 def get_settings(current_user: User = Depends(get_current_user)):
-    safe = {k: v for k, v in _settings.items()}
+    safe = dict(_settings_for_user(current_user))
     if "llm_api_key" in safe and safe["llm_api_key"]:
         key = safe["llm_api_key"]
         safe["llm_api_key"] = key[:4] + "****" + key[-4:] if len(key) > 8 else "****"
@@ -70,21 +95,22 @@ def update_settings(
     payload: SettingsPayload,
     current_user: User = Depends(get_current_user),
 ):
+    settings_store = _settings_for_user(current_user)
     if payload.llm_provider is not None:
-        _settings["llm_provider"] = payload.llm_provider
+        settings_store["llm_provider"] = payload.llm_provider
     if payload.llm_model is not None:
-        _settings["llm_model"] = payload.llm_model
+        settings_store["llm_model"] = payload.llm_model
     if payload.llm_api_key is not None:
-        _settings["llm_api_key"] = payload.llm_api_key
+        settings_store["llm_api_key"] = payload.llm_api_key
     if payload.auto_investigate is not None:
-        _settings["auto_investigate"] = payload.auto_investigate
+        settings_store["auto_investigate"] = payload.auto_investigate
     if payload.auto_merge is not None:
-        _settings["auto_merge"] = payload.auto_merge
+        settings_store["auto_merge"] = payload.auto_merge
     if payload.notification_email is not None:
-        _settings["notification_email"] = payload.notification_email
+        settings_store["notification_email"] = payload.notification_email
 
     # Mask API key in response
-    safe = {k: v for k, v in _settings.items()}
+    safe = dict(settings_store)
     if "llm_api_key" in safe and safe["llm_api_key"]:
         key = safe["llm_api_key"]
         safe["llm_api_key"] = key[:4] + "****" + key[-4:] if len(key) > 8 else "****"
@@ -102,7 +128,7 @@ class AlertRulePayload(BaseModel):
     services: List[str] = []
 
 
-_alert_rules: List[Dict[str, Any]] = [
+_default_alert_rules: List[Dict[str, Any]] = [
     {"id": "1", "name": "High Error Rate", "type": "error_rate", "threshold": ">5% over 5min", "severity": "SEV-2", "enabled": True, "services": ["all"]},
     {"id": "2", "name": "P99 Latency Spike", "type": "latency", "threshold": ">1000ms", "severity": "SEV-2", "enabled": True, "services": ["all"]},
     {"id": "3", "name": "Service Crash Loop", "type": "crash_loop", "threshold": ">=3 restarts in 30min", "severity": "SEV-1", "enabled": True, "services": ["all"]},
@@ -110,16 +136,25 @@ _alert_rules: List[Dict[str, Any]] = [
     {"id": "5", "name": "Error Log Spike", "type": "log_anomaly", "threshold": ">=10 errors in 5min", "severity": "SEV-3", "enabled": False, "services": ["all"]},
     {"id": "6", "name": "Database Timeout", "type": "custom", "threshold": ">5s response time", "severity": "SEV-2", "enabled": True, "services": ["api-gateway", "user-service"]},
 ]
+_alert_rules_by_org: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def _alert_rules_for_user(current_user: User) -> List[Dict[str, Any]]:
+    org_key = str(current_user.organization_id or current_user.id)
+    return _alert_rules_by_org.setdefault(
+        org_key,
+        [dict(rule) for rule in _default_alert_rules],
+    )
 
 
 @router.get("/detect/rules")
 def list_alert_rules(current_user: User = Depends(get_current_user)):
-    return _alert_rules
+    return _alert_rules_for_user(current_user)
 
 
 @router.put("/detect/rules/{rule_id}")
 def update_alert_rule(rule_id: str, payload: AlertRulePayload, current_user: User = Depends(get_current_user)):
-    for rule in _alert_rules:
+    for rule in _alert_rules_for_user(current_user):
         if rule["id"] == rule_id:
             rule["name"] = payload.name
             rule["type"] = payload.type
@@ -133,8 +168,9 @@ def update_alert_rule(rule_id: str, payload: AlertRulePayload, current_user: Use
 
 @router.post("/detect/rules")
 def create_alert_rule(payload: AlertRulePayload, current_user: User = Depends(get_current_user)):
+    alert_rules = _alert_rules_for_user(current_user)
     new_rule = {
-        "id": str(len(_alert_rules) + 1),
+        "id": str(len(alert_rules) + 1),
         "name": payload.name,
         "type": payload.type,
         "threshold": payload.threshold,
@@ -142,20 +178,20 @@ def create_alert_rule(payload: AlertRulePayload, current_user: User = Depends(ge
         "enabled": payload.enabled,
         "services": payload.services,
     }
-    _alert_rules.append(new_rule)
+    alert_rules.append(new_rule)
     return {"status": "ok", "rule": new_rule}
 
 
 @router.delete("/detect/rules/{rule_id}")
 def delete_alert_rule(rule_id: str, current_user: User = Depends(get_current_user)):
-    global _alert_rules
-    _alert_rules = [r for r in _alert_rules if r["id"] != rule_id]
+    alert_rules = _alert_rules_for_user(current_user)
+    alert_rules[:] = [r for r in alert_rules if r["id"] != rule_id]
     return {"status": "ok"}
 
 
 @router.put("/detect/rules/{rule_id}/toggle")
 def toggle_alert_rule(rule_id: str, current_user: User = Depends(get_current_user)):
-    for rule in _alert_rules:
+    for rule in _alert_rules_for_user(current_user):
         if rule["id"] == rule_id:
             rule["enabled"] = not rule["enabled"]
             return {"status": "ok", "rule": rule}
@@ -229,7 +265,10 @@ def get_system_health(current_user: User = Depends(get_current_user)):
 # --- Database Migrations (run-once endpoints) ---
 
 @router.post("/admin/migrate")
-def run_pending_migrations(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def run_pending_migrations(
+    auth_ctx: tuple[Organization, UserOrganizationMembership] = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Run pending schema migrations. One-time use per migration."""
     from sqlalchemy import text
     results = []

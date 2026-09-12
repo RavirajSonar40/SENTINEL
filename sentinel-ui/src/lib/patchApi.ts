@@ -82,7 +82,7 @@ export interface ProposedFixDetail {
   description?: string;
   status?: string;
   diff?: string;
-  patch_json?: {
+  patch?: {
     changes: PatchChange[];
   };
   scope_files?: string[];

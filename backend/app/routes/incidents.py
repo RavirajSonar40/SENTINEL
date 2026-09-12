@@ -242,9 +242,11 @@ def delete_incident(
     inc_id = str(incident.id)
     try:
         from sqlalchemy import text
-        # Drop evidence immutability triggers so we can delete evidence
-        db.execute(text("DROP TRIGGER IF EXISTS prevent_evidence_delete_trigger ON evidence CASCADE"))
-        db.execute(text("DROP FUNCTION IF EXISTS prevent_evidence_delete_fn() CASCADE"))
+        # Drop PostgreSQL evidence immutability objects before deleting evidence.
+        # SQLite test databases do not support PostgreSQL's CASCADE syntax.
+        if db.bind and db.bind.dialect.name == "postgresql":
+            db.execute(text("DROP TRIGGER IF EXISTS prevent_evidence_delete_trigger ON evidence CASCADE"))
+            db.execute(text("DROP FUNCTION IF EXISTS prevent_evidence_delete_fn() CASCADE"))
 
         # Get investigation IDs
         inv_rows = db.execute(text("SELECT id FROM investigations WHERE incident_id = :iid"), {"iid": inc_id}).fetchall()

@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import json
 import tempfile
+import shlex
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -33,13 +34,21 @@ async def create_workspace(
     workspace = tempfile.mkdtemp(prefix="sentinel_fix_")
     try:
         clone_url = f"https://github.com/{repository}.git"
+        clone_env = os.environ.copy()
         if token:
-            clone_url = f"https://{token}@github.com/{repository}.git"
+            # Pass credentials through Git's HTTP extra-header configuration
+            # rather than interpolating them into a shell command or URL.
+            import base64
+            basic_token = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+            clone_env["GIT_CONFIG_COUNT"] = "1"
+            clone_env["GIT_CONFIG_KEY_0"] = "http.extraheader"
+            clone_env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: basic {basic_token}"
 
-        proc = await asyncio.create_subprocess_shell(
-            f"git clone --depth 50 --single-branch {clone_url} {workspace}/repo",
+        proc = await asyncio.create_subprocess_exec(
+            "git", "clone", "--depth", "50", "--single-branch", clone_url, f"{workspace}/repo",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=clone_env,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
 
@@ -48,8 +57,8 @@ async def create_workspace(
             os.makedirs(f"{workspace}/repo", exist_ok=True)
             return workspace
 
-        proc2 = await asyncio.create_subprocess_shell(
-            f"git checkout {sha}",
+        proc2 = await asyncio.create_subprocess_exec(
+            "git", "checkout", sha,
             cwd=f"{workspace}/repo",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -148,8 +157,12 @@ class ValidationReport:
 async def run_command(cmd: str, cwd: str = None, timeout: int = 120) -> Dict:
     """Run a shell command and return output."""
     try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
+        if any(operator in cmd for operator in ("&", "|", ";", ">", "<", "`", "$(")):
+            raise ValueError("Shell operators are not allowed in validation commands")
+        args = shlex.split(cmd, posix=False)
+        args = [arg[1:-1] if len(arg) >= 2 and arg[0] == arg[-1] == '"' else arg for arg in args]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
@@ -216,11 +229,11 @@ async def validate_tests(project_path: str, language: str = "python") -> Validat
     """Run test suite."""
     start = datetime.now(timezone.utc)
     test_commands = {
-        "python": "python -m pytest --tb=short -q 2>&1 | head -50",
-        "javascript": "npm test -- --watchAll=false 2>&1 | head -50",
-        "typescript": "npm test -- --watchAll=false 2>&1 | head -50",
-        "go": "go test ./... -short 2>&1 | head -50",
-        "rust": "cargo test 2>&1 | head -50",
+        "python": "python -m pytest --tb=short -q",
+        "javascript": "npm test -- --watchAll=false",
+        "typescript": "npm test -- --watchAll=false",
+        "go": "go test ./... -short",
+        "rust": "cargo test",
     }
 
     cmd = test_commands.get(language, test_commands["python"])
@@ -243,11 +256,11 @@ async def validate_build(project_path: str, language: str = "python") -> Validat
     """Run build check."""
     start = datetime.now(timezone.utc)
     build_commands = {
-        "python": "python -m py_compile $(find . -name '*.py' | head -20 | tr '\\n' ' ') 2>&1",
-        "javascript": "npm run build 2>&1 | tail -20",
-        "typescript": "npm run build 2>&1 | tail -20",
-        "go": "go build ./... 2>&1",
-        "rust": "cargo build 2>&1 | tail -20",
+        "python": "python -m compileall -q .",
+        "javascript": "npm run build",
+        "typescript": "npm run build",
+        "go": "go build ./...",
+        "rust": "cargo build",
     }
 
     cmd = build_commands.get(language, build_commands["python"])

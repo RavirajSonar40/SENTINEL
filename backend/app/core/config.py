@@ -1,3 +1,4 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -27,6 +28,7 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_ID: str = ""
     GITHUB_CLIENT_SECRET: str = ""
     GITHUB_WEBHOOK_SECRET: str = ""
+    ALERT_WEBHOOK_SECRET: str = ""
     GITHUB_REDIRECT_URI: str = "http://localhost:8000/github/callback"
 
     FRONTEND_URL: str = "http://localhost:3000"
@@ -39,6 +41,15 @@ class Settings(BaseSettings):
     GITHUB_TOKEN: str = ""
 
     LOG_LEVEL: str = "INFO"
+
+    @model_validator(mode="after")
+    def reject_production_defaults(self):
+        if self.ENVIRONMENT.lower() in {"production", "staging"}:
+            if not self.SECRET_KEY or self.SECRET_KEY == "sentinel-dev-secret-key-change-in-production":
+                raise ValueError("SECRET_KEY must be explicitly configured outside development and testing")
+            if "sentinel_dev_2026" in self.DATABASE_URL or self.DATABASE_URL.startswith("sqlite://"):
+                raise ValueError("DATABASE_URL must point to a configured production database")
+        return self
 
     @property
     def resolved_llm_base_url(self) -> str:

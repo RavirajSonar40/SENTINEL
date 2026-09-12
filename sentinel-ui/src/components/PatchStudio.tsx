@@ -42,7 +42,7 @@ export function PatchStudio({ fix, onRefresh }: PatchStudioProps) {
   // Manual Edit State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editedChanges, setEditedChanges] = useState<PatchChange[]>(
-    fix.patch_json?.changes || []
+    fix.patch?.changes || []
   );
   const [rollbackPlan, setRollbackPlan] = useState(fix.rollback_plan || '');
   const [savingEdit, setSavingEdit] = useState(false);
@@ -52,7 +52,7 @@ export function PatchStudio({ fix, onRefresh }: PatchStudioProps) {
   useEffect(() => {
     if (fix.versions) setHistory(fix.versions);
     if (fix.generated_tests) setTests(fix.generated_tests);
-    if (fix.patch_json?.changes) setEditedChanges(fix.patch_json.changes);
+    if (fix.patch?.changes) setEditedChanges(fix.patch.changes);
     if (fix.rollback_plan) setRollbackPlan(fix.rollback_plan);
 
     loadPolicyAndApproval();

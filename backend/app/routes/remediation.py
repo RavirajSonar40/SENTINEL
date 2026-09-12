@@ -291,7 +291,8 @@ async def publish_draft_pr(
 
     gh_token = None
     if installation and installation.tokens_encrypted:
-        gh_token = installation.tokens_encrypted
+        from app.core.github import resolve_stored_github_token
+        gh_token = resolve_stored_github_token(installation.tokens_encrypted)
     if not gh_token:
         from app.core.github import resolve_github_token
         gh_token = resolve_github_token(db=db, repository=repository_name)
@@ -645,7 +646,7 @@ async def generate_patch_and_tests_endpoint(
 
     # 2. Extract Context & File Contents
     file_contents: Dict[str, str] = {}
-    repo_name = repository.full_name if repository else (incident.service if incident else "service-repo")
+    repo_name = repository.full_name if repository else (incident.service_name if incident else "service-repo")
     base_sha = req.base_commit_sha or (repository.default_branch if repository else "main")
 
     # Read relevant files if scope specified

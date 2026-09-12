@@ -14,6 +14,7 @@ from app.core.permissions import get_active_membership, require_role
 from app.core.crypto import (
     encrypt_secret, decrypt_secret, verify_hmac_sha256, generate_webhook_credentials
 )
+from app.core.github import resolve_stored_github_token
 from app.models.incident import (
     User, Organization, UserOrganizationMembership, MembershipRole,
     Deployment, DeploymentStatus, DeploymentProvider,
@@ -482,7 +483,7 @@ async def receive_github_deployment_webhook(
     # A. Dedicated GitHub App installation token/secret if present on repository
     if repo.installation and repo.installation.tokens_encrypted:
         try:
-            dec = decrypt_secret(repo.installation.tokens_encrypted)
+            dec = resolve_stored_github_token(repo.installation.tokens_encrypted)
             if dec:
                 secret_candidates.append(dec)
         except Exception:

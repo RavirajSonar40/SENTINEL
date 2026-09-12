@@ -11,12 +11,29 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.rate_limit import limiter
+from app.core.config import settings
+from app.core.crypto import verify_hmac_sha256
 from app.models.incident import (
     Incident, IncidentStatus, IncidentSeverity, IncidentSource,
     User, Service, IncidentSignal,
 )
 
 router = APIRouter()
+
+
+async def _read_verified_payload(request: Request) -> Dict[str, Any]:
+    """Read an alert payload after verifying the shared production HMAC secret."""
+    body = await request.body()
+    if settings.ENVIRONMENT.lower() != "testing":
+        if not settings.ALERT_WEBHOOK_SECRET:
+            raise HTTPException(status_code=503, detail="Alert webhook signing is not configured")
+        signature = request.headers.get("X-Sentinel-Signature")
+        if not verify_hmac_sha256(body, signature or "", settings.ALERT_WEBHOOK_SECRET):
+            raise HTTPException(status_code=401, detail="Invalid alert webhook signature")
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Webhook payload must be valid JSON")
 
 
 def _schedule_investigation(incident: Incident):
@@ -342,7 +359,7 @@ def create_incident_from_alert(
 @limiter.limit("60/minute")
 async def receive_pagerduty(request: Request, db: Session = Depends(get_db)):
     """Receive PagerDuty webhook."""
-    payload = await request.json()
+    payload = await _read_verified_payload(request)
     alert = normalize_pagerduty(payload)
     incident = create_incident_from_alert(alert, db)
     _schedule_investigation(incident)
@@ -353,7 +370,7 @@ async def receive_pagerduty(request: Request, db: Session = Depends(get_db)):
 @limiter.limit("60/minute")
 async def receive_datadog(request: Request, db: Session = Depends(get_db)):
     """Receive Datadog alert webhook."""
-    payload = await request.json()
+    payload = await _read_verified_payload(request)
     alert = normalize_datadog(payload)
     incident = create_incident_from_alert(alert, db)
     _schedule_investigation(incident)
@@ -364,7 +381,7 @@ async def receive_datadog(request: Request, db: Session = Depends(get_db)):
 @limiter.limit("60/minute")
 async def receive_sentry(request: Request, db: Session = Depends(get_db)):
     """Receive Sentry webhook."""
-    payload = await request.json()
+    payload = await _read_verified_payload(request)
     alert = normalize_sentry(payload)
     incident = create_incident_from_alert(alert, db)
     _schedule_investigation(incident)
@@ -375,7 +392,7 @@ async def receive_sentry(request: Request, db: Session = Depends(get_db)):
 @limiter.limit("60/minute")
 async def receive_slack(request: Request, db: Session = Depends(get_db)):
     """Receive Slack alert."""
-    payload = await request.json()
+    payload = await _read_verified_payload(request)
     alert = normalize_slack(payload)
     incident = create_incident_from_alert(alert, db)
     _schedule_investigation(incident)
@@ -386,7 +403,7 @@ async def receive_slack(request: Request, db: Session = Depends(get_db)):
 @limiter.limit("60/minute")
 async def receive_generic(request: Request, db: Session = Depends(get_db)):
     """Receive generic webhook — auto-detects source from payload."""
-    payload = await request.json()
+    payload = await _read_verified_payload(request)
 
     # Auto-detect source
     source = "generic"

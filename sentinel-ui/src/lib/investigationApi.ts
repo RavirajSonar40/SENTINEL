@@ -151,12 +151,12 @@ export function subscribeInvestigationStream(
   investigationId: string,
   streamTicket: string,
   onEvent: (event: WorkflowStreamEvent) => void,
-  onError?: (err: any) => void
+  onError?: (err: Event) => void
 ): () => void {
   const url = `${API_BASE}/investigations/${investigationId}/stream?ticket=${encodeURIComponent(streamTicket)}`;
   const es = new EventSource(url);
 
-  es.onmessage = (e) => {
+  const handleEvent = (e: MessageEvent<string>) => {
     try {
       const data: WorkflowStreamEvent = JSON.parse(e.data);
       onEvent(data);
@@ -165,12 +165,26 @@ export function subscribeInvestigationStream(
     }
   };
 
+  es.onmessage = handleEvent;
+  const eventTypes: WorkflowStreamEvent["event_type"][] = [
+    "step_started",
+    "log",
+    "step_completed",
+    "workflow_finished",
+    "workflow_failed",
+    "abstained",
+    "paused",
+    "heartbeat",
+  ];
+  eventTypes.forEach((eventType) => es.addEventListener(eventType, handleEvent));
+
   es.onerror = (err) => {
     if (onError) onError(err);
     es.close();
   };
 
   return () => {
+    eventTypes.forEach((eventType) => es.removeEventListener(eventType, handleEvent));
     es.close();
   };
 }

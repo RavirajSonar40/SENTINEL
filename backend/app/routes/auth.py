@@ -81,7 +81,7 @@ def register(request: Request, payload: UserCreate, db: Session = Depends(get_db
 @limiter.limit("10/minute")
 def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == payload.username).first()
-    if not user or not verify_password(payload.password, user.hashed_password):
+    if not user or not getattr(user, "is_active", True) or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token(data={"sub": str(user.id)})

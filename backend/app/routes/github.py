@@ -17,6 +17,7 @@ logger = logging.getLogger("sentinel.github")
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.core.config import settings
+from app.core.github import encrypt_github_token, resolve_stored_github_token
 from app.core.rate_limit import limiter
 from app.models.incident import (
     User, Organization, UserOrganizationMembership, MembershipRole,
@@ -88,7 +89,7 @@ async def connect_with_token(
         GitHubInstallation.account_login == github_login,
     ).first()
     if existing:
-        existing.tokens_encrypted = token
+        existing.tokens_encrypted = encrypt_github_token(token)
         existing.updated_at = func.now()
     else:
         inst_record = GitHubInstallation(
@@ -100,7 +101,7 @@ async def connect_with_token(
             target_type="user",
             permissions={"contents": "read", "metadata": "read"},
             repository_selection="all",
-            tokens_encrypted=token,
+            tokens_encrypted=encrypt_github_token(token),
         )
         db.add(inst_record)
 
@@ -159,7 +160,7 @@ async def sync_repos_token(
     if not installation:
         raise HTTPException(404, "No GitHub connection found for this user")
 
-    token = installation.tokens_encrypted
+    token = resolve_stored_github_token(installation.tokens_encrypted)
     github = GitHubClient(token)
 
     try:
@@ -280,11 +281,11 @@ async def github_callback(code: str, iss: Optional[str] = None, db: Session = De
                 target_type=inst["target_type"],
                 permissions=inst.get("permissions"),
                 repository_selection=inst.get("repository_selection"),
-                tokens_encrypted=access_token,  # TODO: encrypt
+                tokens_encrypted=encrypt_github_token(access_token),
             )
             db.add(inst_record)
         else:
-            existing.tokens_encrypted = access_token
+            existing.tokens_encrypted = encrypt_github_token(access_token)
             existing.permissions = inst.get("permissions")
             existing.repository_selection = inst.get("repository_selection")
             existing.updated_at = func.now()
@@ -341,7 +342,7 @@ async def sync_repositories(
     db.add(sync)
     db.commit()
 
-    token = installation.tokens_encrypted
+    token = resolve_stored_github_token(installation.tokens_encrypted)
     github = GitHubClient(token)
 
     try:
@@ -465,7 +466,7 @@ async def list_commits(
     if not installation:
         raise HTTPException(404, "Installation not found")
 
-    token = installation.tokens_encrypted
+    token = resolve_stored_github_token(installation.tokens_encrypted)
     github = GitHubClient(token)
 
     commits = await github.list_commits(owner, repo, since, until, branch, limit)
@@ -498,7 +499,7 @@ async def get_commit(
     installation = db.query(GitHubInstallation).filter(
         GitHubInstallation.id == repo_obj.installation_id
     ).first()
-    token = installation.tokens_encrypted
+    token = resolve_stored_github_token(installation.tokens_encrypted)
     github = GitHubClient(token)
 
     commit = await github.get_commit(owner, repo, sha)
@@ -531,7 +532,7 @@ async def list_branches(
     installation = db.query(GitHubInstallation).filter(
         GitHubInstallation.id == repo_obj.installation_id
     ).first()
-    token = installation.tokens_encrypted
+    token = resolve_stored_github_token(installation.tokens_encrypted)
     github = GitHubClient(token)
 
     branches = await github.list_branches(owner, repo)
@@ -561,7 +562,7 @@ async def list_pull_requests(
     installation = db.query(GitHubInstallation).filter(
         GitHubInstallation.id == repo_obj.installation_id
     ).first()
-    token = installation.tokens_encrypted
+    token = resolve_stored_github_token(installation.tokens_encrypted)
     github = GitHubClient(token)
 
     prs = await github.list_prs(owner, repo, state, limit)
@@ -597,7 +598,7 @@ async def get_pull_request(
     installation = db.query(GitHubInstallation).filter(
         GitHubInstallation.id == repo_obj.installation_id
     ).first()
-    token = installation.tokens_encrypted
+    token = resolve_stored_github_token(installation.tokens_encrypted)
     github = GitHubClient(token)
 
     pr = await github.get_pr(owner, repo, number)

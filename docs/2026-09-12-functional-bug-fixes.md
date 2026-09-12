@@ -14,6 +14,7 @@
 - Upgraded Next.js to 16.3.5 and removed reported production dependency vulnerabilities.
 - Scoped legacy settings and alert-rule state by organization.
 - Added production/staging startup validation for development JWT and database defaults.
+- Corrected incident-detail evidence, hypotheses, root-cause, and timeline requests to use incident IDs instead of investigation IDs.
 
 ## Validation
 
@@ -24,6 +25,7 @@
 - `sentinel-ui`: `npm audit --omit=dev` passed with 0 vulnerabilities.
 - `backend`: focused authorization, webhook, remediation, and validation tests passed.
 - `backend`: final compile and full test suite passed after configuration/state fixes.
+- `sentinel-ui`: `npx next build --webpack` passed after local Turbopack subprocess crashes.
 
 ## Scope
 

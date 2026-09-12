@@ -481,11 +481,11 @@ export default function InvestigationDetail() {
           if (inc.investigation) {
             const inv = await getInvestigation(token, inc.investigation.id).catch(() => null);
             if (inv) setInvestigation(inv);
-            const ev = await listEvidence(token, inc.investigation.id).catch(() => []);
+            const ev = await listEvidence(token, inc.id).catch(() => []);
             setEvidence(ev);
-            const hyp = await listHypotheses(token, inc.investigation.id).catch(() => []);
+            const hyp = await listHypotheses(token, inc.id).catch(() => []);
             setHypotheses(hyp);
-            const rc = await getRootCause(token, inc.investigation.id).catch(() => null);
+            const rc = await getRootCause(token, inc.id).catch(() => null);
             setRootCause(rc);
             const fx = await listFixes(token, inc.investigation.id).catch(() => []);
             setFixes(fx);
@@ -532,11 +532,11 @@ export default function InvestigationDetail() {
         setEditDescription(inc.description || "");
         if (inc.investigation) {
           getInvestigation(token, inc.investigation.id).then(setInvestigation).catch(() => {});
-          listEvidence(token, inc.investigation.id).then(setEvidence).catch(() => {});
-          listHypotheses(token, inc.investigation.id).then(setHypotheses).catch(() => {});
-          getRootCause(token, inc.investigation.id).then(setRootCause).catch(() => {});
+          listEvidence(token, inc.id).then(setEvidence).catch(() => {});
+          listHypotheses(token, inc.id).then(setHypotheses).catch(() => {});
+          getRootCause(token, inc.id).then(setRootCause).catch(() => {});
           listFixes(token, inc.investigation.id).then(setFixes).catch(() => {});
-          getInvestigationTimeline(token, inc.investigation.id).then(setTimeline).catch(() => {});
+          getInvestigationTimeline(token, inc.id).then(setTimeline).catch(() => {});
         }
         // Load repositories for GitHub evidence
         listRepositories(token).then(setRepos).catch(() => {});

@@ -15,6 +15,7 @@
 - Scoped legacy settings and alert-rule state by organization.
 - Added production/staging startup validation for development JWT and database defaults.
 - Corrected incident-detail evidence, hypotheses, root-cause, and timeline requests to use incident IDs instead of investigation IDs.
+- Corrected the shared frontend API helper URLs for those same incident-scoped endpoints.
 
 ## Validation
 
@@ -26,6 +27,7 @@
 - `backend`: focused authorization, webhook, remediation, and validation tests passed.
 - `backend`: final compile and full test suite passed after configuration/state fixes.
 - `sentinel-ui`: `npx next build --webpack` passed after local Turbopack subprocess crashes.
+- Live Render health recovered after a transient 503; its OpenAPI now exposes all corrected incident routes.
 
 ## Scope
 

@@ -241,16 +241,16 @@ export async function listTasks(token: string, investigationId: string): Promise
   return request(`/investigations/${investigationId}/tasks`, { token });
 }
 
-export async function listEvidence(token: string, investigationId: string): Promise<Evidence[]> {
-  return request(`/investigations/${investigationId}/evidence`, { token });
+export async function listEvidence(token: string, incidentId: string): Promise<Evidence[]> {
+  return request(`/incidents/${incidentId}/evidence`, { token });
 }
 
-export async function listHypotheses(token: string, investigationId: string): Promise<Hypothesis[]> {
-  return request(`/investigations/${investigationId}/hypotheses`, { token });
+export async function listHypotheses(token: string, incidentId: string): Promise<Hypothesis[]> {
+  return request(`/incidents/${incidentId}/hypotheses`, { token });
 }
 
-export async function getRootCause(token: string, investigationId: string): Promise<RootCause> {
-  return request(`/investigations/${investigationId}/root-cause`, { token });
+export async function getRootCause(token: string, incidentId: string): Promise<RootCause> {
+  return request(`/incidents/${incidentId}/root-cause`, { token });
 }
 
 // Investigation Engine
@@ -479,8 +479,8 @@ export interface TimelineEvent {
   color: string;
 }
 
-export async function getInvestigationTimeline(token: string, investigationId: string): Promise<TimelineEvent[]> {
-  return request<TimelineEvent[]>(`/investigations/${investigationId}/timeline`, { token });
+export async function getInvestigationTimeline(token: string, incidentId: string): Promise<TimelineEvent[]> {
+  return request<TimelineEvent[]>(`/incidents/${incidentId}/timeline`, { token });
 }
 
 // Historical Search

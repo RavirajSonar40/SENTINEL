@@ -242,7 +242,8 @@ export async function listTasks(token: string, investigationId: string): Promise
 }
 
 export async function listEvidence(token: string, incidentId: string): Promise<Evidence[]> {
-  return request(`/incidents/${incidentId}/evidence`, { token });
+  const response = await request<{ items?: Evidence[] }>(`/incidents/${incidentId}/evidence`, { token });
+  return response.items || [];
 }
 
 export async function listHypotheses(token: string, incidentId: string): Promise<Hypothesis[]> {
@@ -480,7 +481,8 @@ export interface TimelineEvent {
 }
 
 export async function getInvestigationTimeline(token: string, incidentId: string): Promise<TimelineEvent[]> {
-  return request<TimelineEvent[]>(`/incidents/${incidentId}/timeline`, { token });
+  const response = await request<{ events?: TimelineEvent[] }>(`/incidents/${incidentId}/timeline`, { token });
+  return response.events || [];
 }
 
 // Historical Search

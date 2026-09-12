@@ -190,7 +190,7 @@ export default function InvestigationDetail() {
       const report = await graphApi.getIncidentBlastRadius(params.id as string);
       setBlastRadius(report);
     } catch (e) {
-      console.error("Blast radius load error:", e);
+      setBlastRadius(null);
     } finally {
       setBlastLoading(false);
     }

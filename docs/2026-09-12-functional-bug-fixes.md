@@ -16,6 +16,8 @@
 - Added production/staging startup validation for development JWT and database defaults.
 - Corrected incident-detail evidence, hypotheses, root-cause, and timeline requests to use incident IDs instead of investigation IDs.
 - Corrected the shared frontend API helper URLs for those same incident-scoped endpoints.
+- Unwrapped evidence and timeline response envelopes before rendering them as arrays.
+- Made missing blast-radius reports render as an empty state instead of logging a page error.
 
 ## Validation
 
@@ -28,6 +30,7 @@
 - `backend`: final compile and full test suite passed after configuration/state fixes.
 - `sentinel-ui`: `npx next build --webpack` passed after local Turbopack subprocess crashes.
 - Live Render health recovered after a transient 503; its OpenAPI now exposes all corrected incident routes.
+- `sentinel-ui`: `npx tsc --noEmit` passed and webpack build passed with `NODE_OPTIONS=--max-old-space-size=4096`.
 
 ## Scope
 
